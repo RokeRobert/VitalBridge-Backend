@@ -36,11 +36,6 @@ public class Usuario
     public string Telefono { get; set; } = string.Empty;
 
     [Required]
-    [Column("contrasena")]
-    [MaxLength(255)]
-    public string Contrasena { get; set; } = string.Empty;
-
-    [Required]
     [Column("id_estado_usuario")]
     public int IdEstadoUsuario { get; set; }
 

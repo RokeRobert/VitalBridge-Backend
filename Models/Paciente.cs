@@ -45,6 +45,10 @@ public class Paciente
     [Column("fecha_registro")]
     public DateTime FechaRegistro { get; set; } = DateTime.UtcNow;
 
+    [Column("parentesco")]
+    [MaxLength(100)]
+    public string? Parentesco { get; set; } = "Familiar";
+
     // Propiedades de navegación
     [ForeignKey(nameof(IdTipoPaciente))]
     public TipoPaciente? TipoPaciente { get; set; }
