@@ -1,8 +1,8 @@
-// ============================================================================
+﻿// ============================================================================
 // CONTROLADOR DE TOMAS Y SEGUIMIENTO DIARIO (TomasController.cs)
 // ============================================================================
-// Administra las tomas programadas para el día y la confirmación de ingesta
-// de medicamentos por parte del paciente o cuidador:
+// Administra las tomas programadas y el registro de confirmación de medicamentos
+// para el paciente en VitalBridge:
 // 1. Obtener tomas de hoy: GET /api/tomas/hoy?pacienteId={guid}
 // 2. Confirmar toma realizada: POST /api/tomas/confirmar
 // ============================================================================
@@ -11,16 +11,10 @@ using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
+using VitalBridge_Backend.DTOs;
 using VitalBridge_Backend.Models;
 
 namespace VitalBridge_Backend.Controllers;
-
-public class ConfirmarTomaDto
-{
-    public int IdHorario { get; set; }
-    public DateTime? HoraTomada { get; set; }
-    public string? Observaciones { get; set; }
-}
 
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/tomas
@@ -36,12 +30,13 @@ public class TomasController : ControllerBase
     }
 
     // ========================================================================
-    // 1. OBTENER TOMAS DEL DÍA DE HOY
+    // 1. OBTENER TOMAS DEL DÍA DE HOY PARA UN PACIENTE
     // Endpoint: GET /api/tomas/hoy?pacienteId={guid}
     // ========================================================================
     [HttpGet("hoy")]
     public async Task<IActionResult> ObtenerTomasHoy(
         [FromQuery] Guid? pacienteId,
+        [FromQuery] DateTime? fecha,
         [FromHeader(Name = "X-User-Id")] string? userIdHeader)
     {
         var query = _context.Horarios
@@ -51,59 +46,82 @@ public class TomasController : ControllerBase
                 .ThenInclude(t => t!.EstadoToma)
             .Where(h => h.Tratamiento != null && h.Tratamiento.IdEstadoTratamiento == 1);
 
+        // Filtrado por paciente o cuidador
         if (pacienteId.HasValue && pacienteId.Value != Guid.Empty)
         {
             query = query.Where(h => h.IdPaciente == pacienteId.Value);
         }
-        else if (Guid.TryParse(userIdHeader, out var parsedUser))
+        else if (Guid.TryParse(userIdHeader, out var parsedUser) && parsedUser != Guid.Empty)
         {
-            query = query.Where(h => h.IdUsuario == parsedUser);
+            query = query.Where(h => h.IdUsuario == parsedUser || h.IdPaciente == parsedUser);
+        }
+        else
+        {
+            return BadRequest(new
+            {
+                exito = false,
+                mensaje = "El parámetro pacienteId o el encabezado X-User-Id es obligatorio."
+            });
         }
 
-        // Ventana del día de hoy en UTC
-        var hoyUtc = DateTime.UtcNow.Date;
-        var mañanaUtc = hoyUtc.AddDays(1);
+        // Definimos la ventana de tiempo (por defecto UTC del día indicado o hoy)
+        var fechaReferencia = (fecha ?? DateTime.UtcNow).Date;
+        var inicioDia = DateTime.SpecifyKind(fechaReferencia, DateTimeKind.Utc);
+        var finDia = inicioDia.AddDays(1);
 
-        var horariosHoy = await query
-            .Where(h => h.Dia >= hoyUtc && h.Dia < mañanaUtc)
+        var horarios = await query
+            .Where(h => h.Dia >= inicioDia && h.Dia < finDia)
             .OrderBy(h => h.Dia)
             .ToListAsync();
 
-        // Si no hay horarios exactos para la fecha UTC de hoy pero hay tratamientos activos,
-        // buscar tomas en una ventana flexible de 24 horas alrededor de hoy
-        if (!horariosHoy.Any())
+        // Si no hay horarios exactos en la ventana estricta de 24h, consultar una ventana flexible
+        // para absorber desfases de zona horaria entre servidor y dispositivo móvil
+        if (!horarios.Any() && !fecha.HasValue)
         {
-            var ventanaInicio = hoyUtc.AddHours(-12);
-            var ventanaFin = hoyUtc.AddHours(36);
+            var ventanaInicio = inicioDia.AddHours(-12);
+            var ventanaFin = finDia.AddHours(12);
 
-            horariosHoy = await query
+            horarios = await query
                 .Where(h => h.Dia >= ventanaInicio && h.Dia <= ventanaFin)
                 .OrderBy(h => h.Dia)
                 .ToListAsync();
         }
 
-        var tomasResultado = horariosHoy.Select(h =>
+        // Mapeo seguro a TomaRespuestaDto
+        var resultado = horarios.Select(h =>
         {
-            var trat = h.Tratamiento!;
-            var unidad = trat.UnidadMedida?.Abreviacion ?? trat.UnidadMedida?.NombreUnidad ?? "dosis";
-            var dosisTexto = $"{trat.Cantidad:0.##} {unidad}";
+            var dosis = h.Tratamiento != null
+                ? $"{h.Tratamiento.Cantidad.ToString("0.##", CultureInfo.InvariantCulture)} {h.Tratamiento.UnidadMedida?.Abreviacion ?? h.Tratamiento.UnidadMedida?.NombreUnidad ?? "tableta"}"
+                : "1 tableta";
 
-            var esTomada = h.Toma != null && h.Toma.IdEstadoToma == 1;
+            var horaFormateada = h.Dia.ToString("hh:mm tt", CultureInfo.InvariantCulture);
 
-            return new
+            string estado = "Pendiente";
+            DateTime? horaTomada = null;
+            string? observaciones = null;
+
+            if (h.Toma != null)
             {
-                idHorario = h.IdHorario,
-                idTratamiento = trat.IdTratamiento,
-                medicamento = trat.Medicamento,
-                dosis = dosisTexto,
-                horaProgramada = h.Dia.ToString("h:mm tt", CultureInfo.InvariantCulture),
-                horaTomada = h.Toma?.HoraTomada,
-                estado = esTomada ? "Tomada" : "Pendiente",
-                observaciones = h.Toma?.Observaciones
+                estado = h.Toma.EstadoToma?.NombreEstado ?? "Tomada";
+                horaTomada = h.Toma.HoraTomada;
+                observaciones = h.Toma.Observaciones;
+            }
+
+            return new TomaRespuestaDto
+            {
+                IdHorario = h.IdHorario,
+                IdTratamiento = h.IdTratamiento,
+                Medicamento = h.Tratamiento?.Medicamento ?? "Medicamento",
+                Dosis = dosis,
+                HoraProgramada = horaFormateada,
+                HoraTomada = horaTomada,
+                Estado = estado,
+                Observaciones = observaciones,
+                Indicaciones = h.Tratamiento?.Indicaciones
             };
         }).ToList();
 
-        return Ok(tomasResultado);
+        return Ok(resultado);
     }
 
     // ========================================================================
@@ -113,40 +131,62 @@ public class TomasController : ControllerBase
     [HttpPost("confirmar")]
     public async Task<IActionResult> ConfirmarToma([FromBody] ConfirmarTomaDto dto)
     {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
         if (dto.IdHorario <= 0)
         {
             return BadRequest(new { exito = false, mensaje = "El ID de horario es inválido." });
         }
 
+        // 1. Verificar existencia del registro de horario
         var horario = await _context.Horarios
+            .Include(h => h.Tratamiento)
             .Include(h => h.Toma)
             .FirstOrDefaultAsync(h => h.IdHorario == dto.IdHorario);
 
         if (horario == null)
         {
-            return NotFound(new { exito = false, mensaje = "Horario de toma no encontrado." });
+            return NotFound(new
+            {
+                exito = false,
+                mensaje = $"No se encontró el horario con ID {dto.IdHorario}."
+            });
         }
 
-        var fechaToma = dto.HoraTomada ?? DateTime.UtcNow;
-        if (horario.Toma == null)
+        // 2. Resolver IdEstadoToma para estado 'Tomada'
+        int idEstadoTomada = 2; // Valor estándar en catálogo
+        var estadoCatalogo = await _context.EstadosToma
+            .FirstOrDefaultAsync(e => e.NombreEstado.ToLower() == "tomada" || e.IdEstadoToma == 2 || e.IdEstadoToma == 1);
+
+        if (estadoCatalogo != null)
         {
-            var nuevaToma = new Toma
-            {
-                IdHorario = dto.IdHorario,
-                IdEstadoToma = 1, // 1 = Tomada
-                HoraTomada = DateTime.SpecifyKind(fechaToma, DateTimeKind.Utc),
-                Observaciones = dto.Observaciones?.Trim()
-            };
-            _context.Tomas.Add(nuevaToma);
+            idEstadoTomada = estadoCatalogo.IdEstadoToma;
         }
-        else
+
+        var horaRegistro = DateTime.SpecifyKind(dto.HoraTomada ?? DateTime.UtcNow, DateTimeKind.Utc);
+
+        // 3. Registrar o actualizar en la tabla 'toma'
+        if (horario.Toma != null)
         {
-            horario.Toma.IdEstadoToma = 1; // 1 = Tomada
-            horario.Toma.HoraTomada = DateTime.SpecifyKind(fechaToma, DateTimeKind.Utc);
+            horario.Toma.IdEstadoToma = idEstadoTomada;
+            horario.Toma.HoraTomada = horaRegistro;
             if (!string.IsNullOrWhiteSpace(dto.Observaciones))
             {
                 horario.Toma.Observaciones = dto.Observaciones.Trim();
             }
+            _context.Tomas.Update(horario.Toma);
+        }
+        else
+        {
+            var nuevaToma = new Toma
+            {
+                IdHorario = dto.IdHorario,
+                IdEstadoToma = idEstadoTomada,
+                HoraTomada = horaRegistro,
+                Observaciones = dto.Observaciones?.Trim()
+            };
+            _context.Tomas.Add(nuevaToma);
         }
 
         await _context.SaveChangesAsync();
@@ -154,8 +194,10 @@ public class TomasController : ControllerBase
         return Ok(new
         {
             exito = true,
-            mensaje = "Toma registrada exitosamente."
+            mensaje = "Toma de medicamento registrada correctamente.",
+            idHorario = dto.IdHorario,
+            estado = "Tomada",
+            horaTomada = horaRegistro
         });
     }
 }
-
