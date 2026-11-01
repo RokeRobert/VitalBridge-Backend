@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
@@ -14,6 +14,18 @@ public class HealthController : ControllerBase
     public HealthController(ApplicationDbContext context)
     {
         _context = context;
+    }
+
+    [HttpGet]
+    public IActionResult HealthCheck()
+    {
+        return Ok(new
+        {
+            status = "healthy",
+            service = "VitalBridge-Backend",
+            version = "1.0.0",
+            timestamp = DateTime.UtcNow
+        });
     }
 
     [HttpGet("db-check")]
