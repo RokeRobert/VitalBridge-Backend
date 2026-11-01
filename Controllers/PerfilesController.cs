@@ -1,10 +1,10 @@
-// ============================================================================
+﻿// ============================================================================
 // CONTROLADOR DE PERFILES Y FOTOS DE PERFIL (PerfilesController.cs)
 // ============================================================================
 // Este controlador gestiona:
-// 1. Subida de fotos de perfil hacia Supabase Storage y actualización en PostgreSQL.
+// 1. Subida de fotos de perfil hacia Supabase Storage y actualizaciÃ³n en PostgreSQL.
 // 2. Consulta de datos de perfil del cuidador.
-// 3. Edición de datos personales del cuidador (Nombre, Apellidos, Teléfono).
+// 3. EdiciÃ³n de datos personales del cuidador (Nombre, Apellidos, TelÃ©fono).
 // ============================================================================
 
 using Microsoft.AspNetCore.Mvc;
@@ -36,17 +36,17 @@ public class PerfilesController : ControllerBase
     // Endpoint: POST /api/perfiles/foto
     // ========================================================================
     // Recibe la imagen mediante 'multipart/form-data'. La transmite a Supabase
-    // Storage y guarda la URL pública en el campo 'foto' o 'foto_paciente'.
+    // Storage y guarda la URL pÃºblica en el campo 'foto' o 'foto_paciente'.
     [HttpPost("foto")]
     public async Task<IActionResult> SubirFotoPerfil(
-        [FromForm] IFormFile? archivo, // Archivo binario enviado por la app móvil
+        [FromForm] IFormFile? archivo, // Archivo binario enviado por la app mÃ³vil
         [FromForm] string tipo,        // Identificador: "usuario" o "paciente"
         [FromForm] Guid id)            // UUID del usuario o del paciente
     {
-        // Validación: Asegurar que el archivo no venga vacío
+        // ValidaciÃ³n: Asegurar que el archivo no venga vacÃ­o
         if (archivo == null || archivo.Length == 0)
         {
-            return BadRequest(new { exito = false, mensaje = "Debe enviar un archivo de imagen válido." });
+            return BadRequest(new { exito = false, mensaje = "Debe enviar un archivo de imagen vÃ¡lido." });
         }
 
         var tipoLimpio = tipo.Trim().ToLower();
@@ -60,7 +60,7 @@ public class PerfilesController : ControllerBase
 
         if (string.IsNullOrEmpty(supabaseUrl) || string.IsNullOrEmpty(supabaseAnonKey))
         {
-            return StatusCode(500, new { exito = false, mensaje = "La configuración de Supabase no está completa." });
+            return StatusCode(500, new { exito = false, mensaje = "La configuraciÃ³n de Supabase no estÃ¡ completa." });
         }
 
         try
@@ -77,11 +77,11 @@ public class PerfilesController : ControllerBase
             using var content = new StreamContent(stream);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(archivo.ContentType ?? "image/jpeg");
 
-            // PASO 3: Construir petición POST a la API de Supabase Storage
+            // PASO 3: Construir peticiÃ³n POST a la API de Supabase Storage
             var request = new HttpRequestMessage(HttpMethod.Post, urlSubida);
             request.Headers.Add("apikey", supabaseAnonKey);
             request.Headers.Add("Authorization", $"Bearer {supabaseAnonKey}");
-            request.Headers.Add("x-upsert", "true"); // Sobrescribe la foto anterior si ya existía una
+            request.Headers.Add("x-upsert", "true"); // Sobrescribe la foto anterior si ya existÃ­a una
             request.Content = content;
 
             var response = await client.SendAsync(request);
@@ -98,8 +98,8 @@ public class PerfilesController : ControllerBase
                 });
             }
 
-            // PASO 4: Construir la URL pública permanente del archivo alojado en la nube
-            var publicUrl = $"{supabaseUrl}/storage/v1/object/public/perfiles/{rutaObjeto}";
+            // PASO 4: Construir la URL pÃºblica permanente del archivo alojado en la nube
+            var publicUrl = $"{supabaseUrl}/storage/v1/object/public/perfiles/{rutaObjeto}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
             // PASO 5: Actualizar la base de datos relacional (PostgreSQL) con la nueva URL
             if (tipoLimpio == "usuario")
@@ -121,7 +121,7 @@ public class PerfilesController : ControllerBase
                 }
             }
 
-            // PASO 6: Responder al móvil con la URL pública para actualizar la vista de inmediato
+            // PASO 6: Responder al mÃ³vil con la URL pÃºblica para actualizar la vista de inmediato
             return Ok(new
             {
                 exito = true,
@@ -190,7 +190,7 @@ public class PerfilesController : ControllerBase
     }
 }
 
-// Objeto de Transferencia de Datos (DTO) para la actualización de perfil
+// Objeto de Transferencia de Datos (DTO) para la actualizaciÃ³n de perfil
 public class ActualizarUsuarioDto
 {
     public string? Nombre { get; set; }
