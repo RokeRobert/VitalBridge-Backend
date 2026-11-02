@@ -223,19 +223,23 @@ public class TratamientosController : ControllerBase
                         _context.Tomas.RemoveRange(tomasAsociadas);
                     }
 
-                    // 2. Remover los horarios anteriores
-                    _context.Horarios.RemoveRange(horariosAEliminar);
-                    await _context.SaveChangesAsync();
+                    // 2. Remover los horarios tanto de la coleccion como del contexto
+                    foreach (var h in horariosAEliminar)
+                    {
+                        tratamiento.Horarios.Remove(h);
+                        _context.Horarios.Remove(h);
+                    }
                 }
 
-                // 3. Generar los nuevos horarios con las nuevas horas
+                // 3. Generar y agregar los nuevos horarios directamente a la coleccion
                 var nuevosHorarios = GenerarHorarios(tratamiento, dto.Horarios);
-                if (nuevosHorarios.Any())
+                foreach (var nh in nuevosHorarios)
                 {
-                    _context.Horarios.AddRange(nuevosHorarios);
+                    tratamiento.Horarios.Add(nh);
                 }
             }
 
+            // 4. Guardar todos los cambios de forma atomica en una sola transaccion
             await _context.SaveChangesAsync();
 
             await _context.Entry(tratamiento).Reference(t => t.UnidadMedida).LoadAsync();
