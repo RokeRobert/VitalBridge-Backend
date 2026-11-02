@@ -86,17 +86,18 @@ public class FirebaseNotificationService
 
         try
         {
+            // Se envía como mensaje de datos de alta prioridad (Data Message con Priority = High).
+            // Esto garantiza que Android despierte el proceso de fondo de la app incluso si está
+            // cerrada o con pantalla bloqueada, permitiendo que el handler nativo ejecute la alarma
+            // en pantalla completa con sonido y vibración.
             var message = new MulticastMessage
             {
                 Tokens = tokensUnicos,
-                Notification = new Notification
-                {
-                    Title = "¡ALERTA DE EMERGENCIA SOS!",
-                    Body = $"El paciente {nombrePaciente} requiere asistencia urgente."
-                },
                 Data = new Dictionary<string, string>
                 {
                     { "tipo", "SOS" },
+                    { "titulo", "¡ALERTA DE EMERGENCIA SOS!" },
+                    { "cuerpo", $"El paciente {nombrePaciente} requiere asistencia urgente." },
                     { "idAlerta", idAlerta.ToString() },
                     { "nombrePaciente", nombrePaciente },
                     { "latitud", latitud?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "" },
@@ -105,18 +106,13 @@ public class FirebaseNotificationService
                 },
                 Android = new AndroidConfig
                 {
-                    Priority = Priority.High,
-                    Notification = new AndroidNotification
-                    {
-                        ChannelId = "vitalbridge_alarmas_medicas_v4",
-                        Sound = "alarma"
-                    }
+                    Priority = Priority.High
                 }
             };
 
             var response = await FirebaseMessaging.DefaultInstance.SendEachForMulticastAsync(message);
             _logger.LogInformation(
-                "Notificación SOS enviada vía FCM. Éxitos: {Exitos}, Fallos: {Fallos} (Total tokens: {Total})",
+                "Notificación SOS enviada vía FCM (Data Message de alta prioridad). Éxitos: {Exitos}, Fallos: {Fallos} (Total tokens: {Total})",
                 response.SuccessCount, response.FailureCount, tokensUnicos.Count);
 
             return response.SuccessCount;
