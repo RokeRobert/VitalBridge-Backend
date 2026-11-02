@@ -201,50 +201,38 @@ public class TratamientosController : ControllerBase
 
         try
         {
-            // Si se enviaron horarios nuevos, regenerar los horarios futuros
+            // Si se enviaron horarios nuevos, regenerar los horarios futuros usando SQL directo
             if (dto.Horarios != null && dto.Horarios.Count > 0)
             {
                 var ahoraUtc = DateTime.UtcNow;
-                var horariosAEliminar = tratamiento.Horarios
-                    .Where(h => h.Dia >= ahoraUtc.Date)
-                    .ToList();
+                var fechaCorte = DateTime.SpecifyKind(ahoraUtc.Date.AddDays(-1), DateTimeKind.Utc);
 
-                if (horariosAEliminar.Any())
-                {
-                    var idsAEliminar = horariosAEliminar.Select(h => h.IdHorario).ToList();
+                // 1. Eliminar tomas y horarios futuros en la base de datos de forma limpia
+                await _context.Database.ExecuteSqlRawAsync(
+                    @"DELETE FROM toma WHERE id_horario IN (
+                        SELECT id_horario FROM horario WHERE id_tratamiento = {0} AND dia >= {1}
+                    )", id, fechaCorte);
 
-                    // 1. Eliminar tomas asociadas a esos horarios para no violar la llave forÃ¡nea
-                    var tomasAsociadas = await _context.Tomas
-                        .Where(t => idsAEliminar.Contains(t.IdHorario))
-                        .ToListAsync();
+                await _context.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM horario WHERE id_tratamiento = {0} AND dia >= {1}",
+                    id, fechaCorte);
 
-                    if (tomasAsociadas.Any())
-                    {
-                        _context.Tomas.RemoveRange(tomasAsociadas);
-                    }
+                // 2. Limpiar la coleccion en memoria para evitar conflictos en el ChangeTracker
+                tratamiento.Horarios.Clear();
 
-                    // 2. Remover los horarios tanto de la coleccion como del contexto
-                    foreach (var h in horariosAEliminar)
-                    {
-                        tratamiento.Horarios.Remove(h);
-                        _context.Horarios.Remove(h);
-                    }
-                }
-
-                // 3. Generar y agregar los nuevos horarios directamente a la coleccion
+                // 3. Generar e insertar los nuevos horarios
                 var nuevosHorarios = GenerarHorarios(tratamiento, dto.Horarios);
-                foreach (var nh in nuevosHorarios)
+                if (nuevosHorarios.Any())
                 {
-                    tratamiento.Horarios.Add(nh);
+                    _context.Horarios.AddRange(nuevosHorarios);
                 }
             }
 
-            // 4. Guardar todos los cambios de forma atomica en una sola transaccion
+            // 4. Guardar cambios en el tratamiento
             await _context.SaveChangesAsync();
 
             await _context.Entry(tratamiento).Reference(t => t.UnidadMedida).LoadAsync();
             await _context.Entry(tratamiento).Collection(t => t.Horarios).LoadAsync();
-
             return Ok(new
             {
                 exito = true,
@@ -258,7 +246,7 @@ public class TratamientosController : ControllerBase
             return StatusCode(500, new
             {
                 exito = false,
-                mensaje = $"Error al actualizar tratamiento: {ex.Message}"
+                mensaje = $"Error al actualizar tratamiento: {ex.Message}", detalle = ex.ToString()
             });
         }
     }
