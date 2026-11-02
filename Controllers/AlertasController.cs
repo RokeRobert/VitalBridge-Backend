@@ -1,16 +1,18 @@
-﻿// ============================================================================
+// ============================================================================
 // CONTROLADOR DE ALERTAS DE EMERGENCIA SOS (AlertasController.cs)
 // ============================================================================
 // Gestiona las señales de auxilio emitidas por pacientes en VitalBridge:
 // 1. Emitir alerta de emergencia: POST /api/alertas/sos
 // 2. Consultar alertas activas: GET /api/alertas/activas
 // 3. Resolver/atender alerta: POST /api/alertas/resolver
+// 4. Registrar Token FCM para cuidador: POST /api/alertas/fcm-token
 // ============================================================================
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
 using VitalBridge_Backend.Models;
+using VitalBridge_Backend.Services;
 
 namespace VitalBridge_Backend.Controllers;
 
@@ -29,17 +31,28 @@ public class ResolverAlertaDto
     public DateTime? FechaResolucion { get; set; }
 }
 
+public class RegistrarFcmTokenDto
+{
+    public string Token { get; set; } = string.Empty;
+    public Guid? IdUsuario { get; set; }
+}
+
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/alertas
 public class AlertasController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<AlertasController> _logger;
+    private readonly FirebaseNotificationService _firebaseService;
 
-    public AlertasController(ApplicationDbContext context, ILogger<AlertasController> logger)
+    public AlertasController(
+        ApplicationDbContext context,
+        ILogger<AlertasController> logger,
+        FirebaseNotificationService firebaseService)
     {
         _context = context;
         _logger = logger;
+        _firebaseService = firebaseService;
     }
 
     // ========================================================================
@@ -70,13 +83,41 @@ public class AlertasController : ControllerBase
         _context.Alertas.Add(nuevaAlerta);
         await _context.SaveChangesAsync();
 
-        _logger.LogWarning("ALERTA SOS EMITIDA: Paciente {Nombre} ({IdPaciente})", paciente.NombrePaciente, dto.IdPaciente);
+        var nombreCompleto = $"{paciente.NombrePaciente} {paciente.ApellidosPacientes}".Trim();
+        _logger.LogWarning("ALERTA SOS EMITIDA: Paciente {Nombre} ({IdPaciente})", nombreCompleto, dto.IdPaciente);
+
+        // Despachar notificación push de emergencia vía Firebase Cloud Messaging
+        try
+        {
+            var tokensCuidador = await _context.TokensUsuario
+                .Where(t => t.IdUsuario == paciente.IdUsuario)
+                .Select(t => t.Token)
+                .ToListAsync();
+
+            if (tokensCuidador.Any())
+            {
+                await _firebaseService.EnviarNotificacionSosAsync(
+                    tokensCuidador,
+                    nombreCompleto,
+                    dto.Latitud,
+                    dto.Longitud,
+                    nuevaAlerta.IdAlerta);
+            }
+            else
+            {
+                _logger.LogWarning("No se encontraron tokens FCM registrados para el cuidador responsable {IdUsuario}", paciente.IdUsuario);
+            }
+        }
+        catch (Exception exPush)
+        {
+            _logger.LogError(exPush, "Error al enviar notificación push de alerta SOS");
+        }
 
         return StatusCode(201, new
         {
             idAlerta = nuevaAlerta.IdAlerta,
             idPaciente = nuevaAlerta.IdPaciente,
-            nombrePaciente = $"{paciente.NombrePaciente} {paciente.ApellidosPacientes}".Trim(),
+            nombrePaciente = nombreCompleto,
             fechaCreacion = nuevaAlerta.FechaCreacion,
             idEstadoAlerta = nuevaAlerta.IdEstadoAlerta,
             estado = "Activa"
@@ -171,5 +212,56 @@ public class AlertasController : ControllerBase
             idEstadoAlerta = alerta.IdEstadoAlerta,
             estado = "Atendida"
         });
+    }
+
+    // ========================================================================
+    // 4. REGISTRAR TOKEN FCM DE DISPOSITIVO PARA CUIDADOR
+    // Endpoint: POST /api/alertas/fcm-token
+    // ========================================================================
+    [HttpPost("fcm-token")]
+    public async Task<IActionResult> RegistrarFcmToken(
+        [FromBody] RegistrarFcmTokenDto dto,
+        [FromHeader(Name = "X-User-Id")] string? userIdHeader)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Token))
+        {
+            return BadRequest(new { exito = false, mensaje = "El token FCM es requerido." });
+        }
+
+        Guid usuarioId = Guid.Empty;
+        if (dto.IdUsuario.HasValue && dto.IdUsuario.Value != Guid.Empty)
+        {
+            usuarioId = dto.IdUsuario.Value;
+        }
+        else if (Guid.TryParse(userIdHeader, out var parsedId))
+        {
+            usuarioId = parsedId;
+        }
+
+        if (usuarioId == Guid.Empty)
+        {
+            return BadRequest(new { exito = false, mensaje = "El ID del usuario cuidador es requerido." });
+        }
+
+        var tokenExistente = await _context.TokensUsuario.FindAsync(dto.Token.Trim());
+        if (tokenExistente == null)
+        {
+            _context.TokensUsuario.Add(new TokenUsuario
+            {
+                Token = dto.Token.Trim(),
+                IdUsuario = usuarioId,
+                FechaCreacion = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            tokenExistente.IdUsuario = usuarioId;
+            tokenExistente.FechaCreacion = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+        _logger.LogInformation("Token FCM registrado exitosamente para el usuario {IdUsuario}", usuarioId);
+
+        return Ok(new { exito = true, mensaje = "Token FCM registrado exitosamente." });
     }
 }

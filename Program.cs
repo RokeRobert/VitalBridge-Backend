@@ -32,6 +32,9 @@ builder.Services.AddControllers();
 // (por ejemplo, cuando el backend se conecta con Supabase Storage para subir fotos).
 builder.Services.AddHttpClient();
 
+// 5.1 Registro de Servicio de Notificaciones Push con Firebase Cloud Messaging
+builder.Services.AddSingleton<VitalBridge_Backend.Services.FirebaseNotificationService>();
+
 // 6. Configuración de Documentación OpenAPI (Swagger en .NET 9)
 builder.Services.AddOpenApi();
 

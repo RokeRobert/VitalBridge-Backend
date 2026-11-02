@@ -485,3 +485,7 @@ $RECYCLE.BIN/
 
 # Sensitive local development settings
 appsettings.Development.json
+
+# Firebase secrets
+*firebase*.json
+firebase-service-account.json
