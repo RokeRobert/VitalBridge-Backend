@@ -207,7 +207,15 @@ public class TratamientosController : ControllerBase
                 var ahoraUtc = DateTime.UtcNow;
                 var fechaCorte = DateTime.SpecifyKind(ahoraUtc.Date.AddDays(-1), DateTimeKind.Utc);
 
-                // 1. Eliminar tomas y horarios futuros en la base de datos de forma limpia
+                // 1. Asegurar REPLICA IDENTITY FULL para supabase_realtime
+                try
+                {
+                    await _context.Database.ExecuteSqlRawAsync(
+                        "ALTER TABLE toma REPLICA IDENTITY FULL; ALTER TABLE horario REPLICA IDENTITY FULL; ALTER TABLE tratamiento REPLICA IDENTITY FULL; ALTER TABLE alerta REPLICA IDENTITY FULL;");
+                }
+                catch { }
+
+                // 2. Eliminar tomas y horarios futuros en la base de datos de forma limpia
                 await _context.Database.ExecuteSqlRawAsync(
                     @"DELETE FROM toma WHERE id_horario IN (
                         SELECT id_horario FROM horario WHERE id_tratamiento = {0} AND dia >= {1}

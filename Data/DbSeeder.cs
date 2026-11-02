@@ -87,6 +87,19 @@ public static class DbSeeder
             var sqlRealtime = @"
                 DO $$
                 BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'toma') THEN
+                        EXECUTE 'ALTER TABLE toma REPLICA IDENTITY FULL';
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'horario') THEN
+                        EXECUTE 'ALTER TABLE horario REPLICA IDENTITY FULL';
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tratamiento') THEN
+                        EXECUTE 'ALTER TABLE tratamiento REPLICA IDENTITY FULL';
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'alerta') THEN
+                        EXECUTE 'ALTER TABLE alerta REPLICA IDENTITY FULL';
+                    END IF;
+
                     IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
                         BEGIN
                             ALTER PUBLICATION supabase_realtime ADD TABLE tratamiento, toma, horario, alerta;
