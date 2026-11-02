@@ -165,7 +165,6 @@ public class TratamientosController : ControllerBase
     {
         var tratamiento = await _context.Tratamientos
             .Include(t => t.UnidadMedida)
-            .Include(t => t.Horarios)
             .FirstOrDefaultAsync(t => t.IdTratamiento == id);
 
         if (tratamiento == null)
@@ -225,7 +224,15 @@ public class TratamientosController : ControllerBase
                     "DELETE FROM horario WHERE id_tratamiento = {0} AND dia >= {1}",
                     id, fechaCorte);
 
-                // 2. Limpiar la coleccion en memoria para evitar conflictos en el ChangeTracker
+                // 3. Desvincular horarios anteriores del ChangeTracker para evitar DbUpdateConcurrencyException
+                foreach (var entry in _context.ChangeTracker.Entries<Horario>().ToList())
+                {
+                    entry.State = EntityState.Detached;
+                }
+                foreach (var entry in _context.ChangeTracker.Entries<Toma>().ToList())
+                {
+                    entry.State = EntityState.Detached;
+                }
                 tratamiento.Horarios.Clear();
 
                 // 3. Generar e insertar los nuevos horarios
