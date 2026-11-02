@@ -199,34 +199,64 @@ public class TratamientosController : ControllerBase
         if (dto.IdEstadoTratamiento.HasValue && dto.IdEstadoTratamiento.Value > 0)
             tratamiento.IdEstadoTratamiento = dto.IdEstadoTratamiento.Value;
 
-        // Si se enviaron horarios nuevos, regenerar los horarios futuros
-        if (dto.Horarios != null && dto.Horarios.Count > 0)
+        try
         {
-            var ahoraUtc = DateTime.UtcNow;
-            var horariosFuturos = tratamiento.Horarios
-                .Where(h => h.Dia >= ahoraUtc.Date)
-                .ToList();
-
-            _context.Horarios.RemoveRange(horariosFuturos);
-
-            var nuevosHorarios = GenerarHorarios(tratamiento, dto.Horarios);
-            if (nuevosHorarios.Any())
+            // Si se enviaron horarios nuevos, regenerar los horarios futuros
+            if (dto.Horarios != null && dto.Horarios.Count > 0)
             {
-                _context.Horarios.AddRange(nuevosHorarios);
+                var ahoraUtc = DateTime.UtcNow;
+                var horariosAEliminar = tratamiento.Horarios
+                    .Where(h => h.Dia >= ahoraUtc.Date)
+                    .ToList();
+
+                if (horariosAEliminar.Any())
+                {
+                    var idsAEliminar = horariosAEliminar.Select(h => h.IdHorario).ToList();
+
+                    // 1. Eliminar tomas asociadas a esos horarios para no violar la llave forÃ¡nea
+                    var tomasAsociadas = await _context.Tomas
+                        .Where(t => idsAEliminar.Contains(t.IdHorario))
+                        .ToListAsync();
+
+                    if (tomasAsociadas.Any())
+                    {
+                        _context.Tomas.RemoveRange(tomasAsociadas);
+                    }
+
+                    // 2. Remover los horarios anteriores
+                    _context.Horarios.RemoveRange(horariosAEliminar);
+                    await _context.SaveChangesAsync();
+                }
+
+                // 3. Generar los nuevos horarios con las nuevas horas
+                var nuevosHorarios = GenerarHorarios(tratamiento, dto.Horarios);
+                if (nuevosHorarios.Any())
+                {
+                    _context.Horarios.AddRange(nuevosHorarios);
+                }
             }
+
+            await _context.SaveChangesAsync();
+
+            await _context.Entry(tratamiento).Reference(t => t.UnidadMedida).LoadAsync();
+            await _context.Entry(tratamiento).Collection(t => t.Horarios).LoadAsync();
+
+            return Ok(new
+            {
+                exito = true,
+                mensaje = "Tratamiento actualizado exitosamente.",
+                tratamiento = MapearARespuestaDto(tratamiento, dto.Horarios, dto.Presentacion)
+            });
         }
-
-        await _context.SaveChangesAsync();
-
-        await _context.Entry(tratamiento).Reference(t => t.UnidadMedida).LoadAsync();
-        await _context.Entry(tratamiento).Collection(t => t.Horarios).LoadAsync();
-
-        return Ok(new
+        catch (Exception ex)
         {
-            exito = true,
-            mensaje = "Tratamiento actualizado exitosamente.",
-            tratamiento = MapearARespuestaDto(tratamiento, dto.Horarios, dto.Presentacion)
-        });
+            _logger.LogError(ex, "Error al actualizar el tratamiento {Id}", id);
+            return StatusCode(500, new
+            {
+                exito = false,
+                mensaje = $"Error al actualizar tratamiento: {ex.Message}"
+            });
+        }
     }
 
     // ========================================================================
