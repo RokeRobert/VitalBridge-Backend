@@ -40,6 +40,7 @@ public class TratamientosController : ControllerBase
         [FromQuery] Guid? pacienteId,
         [FromHeader(Name = "X-User-Id")] string? userIdHeader)
     {
+        if ((!pacienteId.HasValue || pacienteId.Value == Guid.Empty) && (!Guid.TryParse(userIdHeader, out var parsedUserId) || parsedUserId == Guid.Empty)) return Ok(new List<TratamientoRespuestaDto>());
         var query = _context.Tratamientos
             .Include(t => t.UnidadMedida)
             .Include(t => t.Horarios)
@@ -49,10 +50,10 @@ public class TratamientosController : ControllerBase
         {
             query = query.Where(t => t.IdPaciente == pacienteId.Value);
         }
-        else if (Guid.TryParse(userIdHeader, out var parsedUserId))
+        else if (Guid.TryParse(userIdHeader, out var pUserId))
         {
             // Si no se pasó pacienteId pero sí el ID del cuidador, obtener tratamientos de sus pacientes
-            query = query.Where(t => t.IdUsuario == parsedUserId);
+            query = query.Where(t => t.IdUsuario == pUserId);
         }
 
         var tratamientos = await query

@@ -48,22 +48,20 @@ public class PacientesController : ControllerBase
             cuidadorId = parsedId;
         }
 
+        // Si no se proporcionó un ID de cuidador válido, o es Guid.Empty, o es DummyId,
+        // retornamos lista vacía para no filtrar pacientes de otros usuarios.
+        if (!cuidadorId.HasValue || cuidadorId.Value == Guid.Empty || cuidadorId.Value == DummyId)
+        {
+            return Ok(new List<PacienteRespuestaDto>());
+        }
+
         // Construcción de la consulta con Entity Framework Core:
         // - Include: Trae la información relacionada del catálogo 'TipoPaciente' y los 'Tokens'.
-        // - Where: Filtra solo pacientes activos (IdEstadoPaciente == 1), ignorando los dados de baja.
+        // - Where: Filtra solo pacientes activos (IdEstadoPaciente == 1) que pertenezcan al cuidador autenticado.
         var query = _context.Pacientes
             .Include(p => p.TipoPaciente)
             .Include(p => p.Tokens)
-            .Where(p => p.IdEstadoPaciente == 1);
-
-        if (cuidadorId.HasValue && cuidadorId.Value != Guid.Empty && cuidadorId.Value != DummyId)
-        {
-            var existe = await _context.Usuarios.AnyAsync(u => u.IdUsuario == cuidadorId.Value);
-            if (existe)
-            {
-                query = query.Where(p => p.IdUsuario == cuidadorId.Value);
-            }
-        }
+            .Where(p => p.IdEstadoPaciente == 1 && p.IdUsuario == cuidadorId.Value);
 
         var pacientes = await query
             .OrderByDescending(p => p.FechaRegistro)
@@ -107,11 +105,13 @@ public class PacientesController : ControllerBase
 
         if (idUsuario == Guid.Empty || idUsuario == DummyId)
         {
-            var primerUsuario = await _context.Usuarios.FirstOrDefaultAsync();
-            if (primerUsuario != null)
-                idUsuario = primerUsuario.IdUsuario;
-            else
-                return BadRequest(new { exito = false, mensaje = "Debe especificar un cuidador válido (IdUsuario)." });
+            return BadRequest(new { exito = false, mensaje = "Debe especificar un cuidador válido (IdUsuario)." });
+        }
+
+        var cuidadorExiste = await _context.Usuarios.AnyAsync(u => u.IdUsuario == idUsuario);
+        if (!cuidadorExiste)
+        {
+            return BadRequest(new { exito = false, mensaje = "El cuidador especificado no existe en el sistema." });
         }
 
         // PASO 1: Generación de Token con Garantía Anti-Colisión (Garantiza unicidad en la base de datos)

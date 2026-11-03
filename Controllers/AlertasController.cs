@@ -134,6 +134,18 @@ public class AlertasController : ControllerBase
         [FromQuery] Guid? idUsuario,
         [FromQuery] Guid? idPaciente)
     {
+        Guid? cuidadorId = idUsuario;
+        if (!cuidadorId.HasValue && Guid.TryParse(userIdHeader, out var parsedId))
+        {
+            cuidadorId = parsedId;
+        }
+
+        if ((!idPaciente.HasValue || idPaciente.Value == Guid.Empty) &&
+            (!cuidadorId.HasValue || cuidadorId.Value == Guid.Empty))
+        {
+            return Ok(new List<object>());
+        }
+
         var query = _context.Alertas
             .Include(a => a.Paciente)
             .Include(a => a.EstadoAlerta)
@@ -143,19 +155,10 @@ public class AlertasController : ControllerBase
         {
             query = query.Where(a => a.IdPaciente == idPaciente.Value);
         }
-        else
+        else if (cuidadorId.HasValue && cuidadorId.Value != Guid.Empty)
         {
-            Guid? cuidadorId = idUsuario;
-            if (!cuidadorId.HasValue && Guid.TryParse(userIdHeader, out var parsedId))
-            {
-                cuidadorId = parsedId;
-            }
-
-            if (cuidadorId.HasValue && cuidadorId.Value != Guid.Empty)
-            {
-                // Filtrar alertas que pertenezcan a los pacientes de este cuidador
-                query = query.Where(a => a.Paciente != null && a.Paciente.IdUsuario == cuidadorId.Value);
-            }
+            // Filtrar alertas que pertenezcan a los pacientes de este cuidador
+            query = query.Where(a => a.Paciente != null && a.Paciente.IdUsuario == cuidadorId.Value);
         }
 
         var alertas = await query
