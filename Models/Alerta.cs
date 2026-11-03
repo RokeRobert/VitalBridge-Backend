@@ -22,6 +22,12 @@ public class Alerta
     [Column("id_estado_alerta")]
     public int IdEstadoAlerta { get; set; }
 
+    [Column("latitud")]
+    public double? Latitud { get; set; }
+
+    [Column("longitud")]
+    public double? Longitud { get; set; }
+
     // Propiedades de navegación
     [ForeignKey(nameof(IdPaciente))]
     public Paciente? Paciente { get; set; }
@@ -29,4 +35,3 @@ public class Alerta
     [ForeignKey(nameof(IdEstadoAlerta))]
     public EstadoAlerta? EstadoAlerta { get; set; }
 }
-

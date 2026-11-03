@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // CONTROLADOR DE TOMAS Y SEGUIMIENTO DIARIO (TomasController.cs)
 // ============================================================================
 // Administra las tomas programadas y el registro de confirmación de medicamentos
@@ -103,7 +103,9 @@ public class TomasController : ControllerBase
             if (h.Toma != null)
             {
                 estado = h.Toma.EstadoToma?.NombreEstado ?? "Tomada";
-                horaTomada = h.Toma.HoraTomada;
+                horaTomada = h.Toma.HoraTomada.Kind == DateTimeKind.Utc
+                    ? h.Toma.HoraTomada
+                    : DateTime.SpecifyKind(h.Toma.HoraTomada, DateTimeKind.Utc);
                 observaciones = h.Toma.Observaciones;
             }
 

@@ -77,14 +77,17 @@ public class AlertasController : ControllerBase
         {
             IdPaciente = dto.IdPaciente,
             FechaCreacion = DateTime.UtcNow,
-            IdEstadoAlerta = 1 // 1 = Activa
+            IdEstadoAlerta = 1, // 1 = Activa
+            Latitud = dto.Latitud,
+            Longitud = dto.Longitud
         };
 
         _context.Alertas.Add(nuevaAlerta);
         await _context.SaveChangesAsync();
 
         var nombreCompleto = $"{paciente.NombrePaciente} {paciente.ApellidosPacientes}".Trim();
-        _logger.LogWarning("ALERTA SOS EMITIDA: Paciente {Nombre} ({IdPaciente})", nombreCompleto, dto.IdPaciente);
+        _logger.LogWarning("ALERTA SOS EMITIDA: Paciente {Nombre} ({IdPaciente}) con GPS ({Lat}, {Lng})",
+            nombreCompleto, dto.IdPaciente, dto.Latitud, dto.Longitud);
 
         // Despachar notificación push de emergencia vía Firebase Cloud Messaging
         try
@@ -118,9 +121,11 @@ public class AlertasController : ControllerBase
             idAlerta = nuevaAlerta.IdAlerta,
             idPaciente = nuevaAlerta.IdPaciente,
             nombrePaciente = nombreCompleto,
-            fechaCreacion = nuevaAlerta.FechaCreacion,
+            fechaCreacion = DateTime.SpecifyKind(nuevaAlerta.FechaCreacion, DateTimeKind.Utc),
             idEstadoAlerta = nuevaAlerta.IdEstadoAlerta,
-            estado = "Activa"
+            estado = "Activa",
+            latitud = nuevaAlerta.Latitud,
+            longitud = nuevaAlerta.Longitud
         });
     }
 
@@ -172,9 +177,11 @@ public class AlertasController : ControllerBase
             nombrePaciente = a.Paciente != null
                 ? $"{a.Paciente.NombrePaciente} {a.Paciente.ApellidosPacientes}".Trim()
                 : "Paciente",
-            fechaCreacion = a.FechaCreacion,
+            fechaCreacion = DateTime.SpecifyKind(a.FechaCreacion, DateTimeKind.Utc),
             idEstadoAlerta = a.IdEstadoAlerta,
-            estado = a.EstadoAlerta?.NombreEstado ?? "Activa"
+            estado = a.EstadoAlerta?.NombreEstado ?? "Activa",
+            latitud = a.Latitud,
+            longitud = a.Longitud
         }).ToList();
 
         return Ok(resultado);

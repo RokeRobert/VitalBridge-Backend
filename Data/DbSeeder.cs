@@ -81,7 +81,17 @@ public static class DbSeeder
         }
         catch { }
 
-        // 8. Habilitar publicación supabase_realtime para tablas clave
+        // 8. Asegurar que la tabla 'alerta' tenga las columnas de geolocalización latitud y longitud
+        try
+        {
+            await context.Database.ExecuteSqlRawAsync(@"
+                ALTER TABLE alerta ADD COLUMN IF NOT EXISTS latitud double precision;
+                ALTER TABLE alerta ADD COLUMN IF NOT EXISTS longitud double precision;
+            ");
+        }
+        catch { }
+
+        // 9. Habilitar publicación supabase_realtime para tablas clave
         try
         {
             var sqlRealtime = @"
@@ -113,4 +123,3 @@ public static class DbSeeder
         catch { }
     }
 }
-
