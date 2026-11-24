@@ -109,7 +109,8 @@ public class AlertasController : ControllerBase
                     nombreCompleto,
                     dto.Latitud,
                     dto.Longitud,
-                    nuevaAlerta.IdAlerta);
+                    nuevaAlerta.IdAlerta,
+                    dto.IdPaciente);
             }
             else
             {

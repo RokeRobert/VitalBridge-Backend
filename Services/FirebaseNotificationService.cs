@@ -73,7 +73,8 @@ public class FirebaseNotificationService
         string nombrePaciente,
         double? latitud,
         double? longitud,
-        int idAlerta)
+        int idAlerta,
+        Guid? idPaciente = null)
     {
         if (!_inicializado || tokens == null || tokens.Count == 0)
         {
@@ -90,20 +91,23 @@ public class FirebaseNotificationService
             // Esto garantiza que Android despierte el proceso de fondo de la app incluso si está
             // cerrada o con pantalla bloqueada, permitiendo que el handler nativo ejecute la alarma
             // en pantalla completa con sonido y vibración.
+            var dataPayload = new Dictionary<string, string>
+            {
+                { "tipo", "SOS" },
+                { "titulo", "¡ALERTA DE EMERGENCIA SOS!" },
+                { "cuerpo", $"El paciente {nombrePaciente} requiere asistencia urgente." },
+                { "idAlerta", idAlerta.ToString() },
+                { "idPaciente", idPaciente?.ToString() ?? "" },
+                { "nombrePaciente", nombrePaciente },
+                { "latitud", latitud?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "" },
+                { "longitud", longitud?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "" },
+                { "fechaHora", DateTime.UtcNow.ToString("o") }
+            };
+
             var message = new MulticastMessage
             {
                 Tokens = tokensUnicos,
-                Data = new Dictionary<string, string>
-                {
-                    { "tipo", "SOS" },
-                    { "titulo", "¡ALERTA DE EMERGENCIA SOS!" },
-                    { "cuerpo", $"El paciente {nombrePaciente} requiere asistencia urgente." },
-                    { "idAlerta", idAlerta.ToString() },
-                    { "nombrePaciente", nombrePaciente },
-                    { "latitud", latitud?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "" },
-                    { "longitud", longitud?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "" },
-                    { "fechaHora", DateTime.UtcNow.ToString("o") }
-                },
+                Data = dataPayload,
                 Android = new AndroidConfig
                 {
                     Priority = Priority.High
