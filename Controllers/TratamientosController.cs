@@ -10,14 +10,17 @@
 
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
 using VitalBridge_Backend.DTOs;
+using VitalBridge_Backend.Extensions;
 using VitalBridge_Backend.Models;
 
 namespace VitalBridge_Backend.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/tratamientos
 public class TratamientosController : ControllerBase
@@ -40,7 +43,8 @@ public class TratamientosController : ControllerBase
         [FromQuery] Guid? pacienteId,
         [FromHeader(Name = "X-User-Id")] string? userIdHeader)
     {
-        if ((!pacienteId.HasValue || pacienteId.Value == Guid.Empty) && (!Guid.TryParse(userIdHeader, out var parsedUserId) || parsedUserId == Guid.Empty)) return Ok(new List<TratamientoRespuestaDto>());
+        var usuarioId = User.ObtenerUsuarioId(Request);
+        if ((!pacienteId.HasValue || pacienteId.Value == Guid.Empty) && !usuarioId.HasValue) return Ok(new List<TratamientoRespuestaDto>());
         var query = _context.Tratamientos
             .Include(t => t.UnidadMedida)
             .Include(t => t.Horarios)
@@ -50,10 +54,10 @@ public class TratamientosController : ControllerBase
         {
             query = query.Where(t => t.IdPaciente == pacienteId.Value);
         }
-        else if (Guid.TryParse(userIdHeader, out var pUserId))
+        else if (usuarioId.HasValue)
         {
             // Si no se pasó pacienteId pero sí el ID del cuidador, obtener tratamientos de sus pacientes
-            query = query.Where(t => t.IdUsuario == pUserId);
+            query = query.Where(t => t.IdUsuario == usuarioId.Value);
         }
 
         var tratamientos = await query
@@ -102,14 +106,11 @@ public class TratamientosController : ControllerBase
         }
 
         // 2. Resolver el ID del cuidador responsable
-        Guid cuidadorId = paciente.IdUsuario;
-        if (dto.IdUsuario.HasValue && dto.IdUsuario.Value != Guid.Empty)
+        Guid cuidadorId = User.ObtenerUsuarioId(Request)
+            ?? (dto.IdUsuario.HasValue && dto.IdUsuario.Value != Guid.Empty ? dto.IdUsuario.Value : paciente.IdUsuario);
+        if (cuidadorId == Guid.Empty)
         {
-            cuidadorId = dto.IdUsuario.Value;
-        }
-        else if (Guid.TryParse(userIdHeader, out var headerId) && headerId != Guid.Empty)
-        {
-            cuidadorId = headerId;
+            cuidadorId = paciente.IdUsuario;
         }
 
         // 3. Resolver la unidad de medida correspondiente

@@ -2,15 +2,18 @@
 // CONTROLADOR DE ALERTAS DE EMERGENCIA SOS (AlertasController.cs)
 // ============================================================================
 // Gestiona las señales de auxilio emitidas por pacientes en VitalBridge:
-// 1. Emitir alerta de emergencia: POST /api/alertas/sos
-// 2. Consultar alertas activas: GET /api/alertas/activas
-// 3. Resolver/atender alerta: POST /api/alertas/resolver
-// 4. Registrar Token FCM para cuidador: POST /api/alertas/fcm-token
+// 1. Emitir alerta de emergencia: POST /api/alertas/sos (Público para pacientes)
+// 2. Consultar alertas activas: GET /api/alertas/activas (Protegido)
+// 3. Consultar historial de alertas atendidas: GET /api/alertas/historial (Protegido)
+// 4. Resolver/atender alerta: POST /api/alertas/resolver (Protegido)
+// 5. Registrar Token FCM para cuidador: POST /api/alertas/fcm-token (Protegido)
 // ============================================================================
 
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
+using VitalBridge_Backend.Extensions;
 using VitalBridge_Backend.Models;
 using VitalBridge_Backend.Services;
 
@@ -37,6 +40,7 @@ public class RegistrarFcmTokenDto
     public Guid? IdUsuario { get; set; }
 }
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/alertas
 public class AlertasController : ControllerBase
@@ -59,6 +63,7 @@ public class AlertasController : ControllerBase
     // 1. EMITIR ALERTA SOS DESDE EL MODO PACIENTE
     // Endpoint: POST /api/alertas/sos
     // ========================================================================
+    [AllowAnonymous] // Permitir emisión de emergencia sin requerir token JWT de cuidador
     [HttpPost("sos")]
     public async Task<IActionResult> EmitirAlerta([FromBody] EmitirAlertaDto dto)
     {
@@ -118,6 +123,8 @@ public class AlertasController : ControllerBase
 
         return StatusCode(201, new
         {
+            exito = true,
+            mensaje = "Alerta SOS emitida correctamente.",
             idAlerta = nuevaAlerta.IdAlerta,
             idPaciente = nuevaAlerta.IdPaciente,
             nombrePaciente = nombreCompleto,
@@ -139,11 +146,7 @@ public class AlertasController : ControllerBase
         [FromQuery] Guid? idUsuario,
         [FromQuery] Guid? idPaciente)
     {
-        Guid? cuidadorId = idUsuario;
-        if (!cuidadorId.HasValue && Guid.TryParse(userIdHeader, out var parsedId))
-        {
-            cuidadorId = parsedId;
-        }
+        Guid? cuidadorId = User.ObtenerUsuarioId(Request) ?? idUsuario;
 
         if ((!idPaciente.HasValue || idPaciente.Value == Guid.Empty) &&
             (!cuidadorId.HasValue || cuidadorId.Value == Guid.Empty))
@@ -162,7 +165,6 @@ public class AlertasController : ControllerBase
         }
         else if (cuidadorId.HasValue && cuidadorId.Value != Guid.Empty)
         {
-            // Filtrar alertas que pertenezcan a los pacientes de este cuidador
             query = query.Where(a => a.Paciente != null && a.Paciente.IdUsuario == cuidadorId.Value);
         }
 
@@ -188,7 +190,56 @@ public class AlertasController : ControllerBase
     }
 
     // ========================================================================
-    // 3. RESOLVER / ATENDER ALERTA
+    // 3. CONSULTAR HISTORIAL DE ALERTAS RESUELTAS O ATENDIDAS
+    // Endpoint: GET /api/alertas/historial?idPaciente={guid}
+    // ========================================================================
+    [HttpGet("historial")]
+    public async Task<IActionResult> ObtenerHistorialAlertas(
+        [FromQuery] Guid? idPaciente,
+        [FromQuery] Guid? pacienteId,
+        [FromHeader(Name = "X-User-Id")] string? userIdHeader)
+    {
+        var targetPacienteId = idPaciente ?? pacienteId;
+        var cuidadorId = User.ObtenerUsuarioId(Request);
+
+        // 2: Atendida, 3: Falsa alarma / Resuelta
+        var query = _context.Alertas
+            .Include(a => a.Paciente)
+            .Include(a => a.EstadoAlerta)
+            .Where(a => a.IdEstadoAlerta == 2 || a.IdEstadoAlerta == 3);
+
+        if (targetPacienteId.HasValue && targetPacienteId.Value != Guid.Empty)
+        {
+            query = query.Where(a => a.IdPaciente == targetPacienteId.Value);
+        }
+        else if (cuidadorId.HasValue && cuidadorId.Value != Guid.Empty)
+        {
+            query = query.Where(a => a.Paciente != null && a.Paciente.IdUsuario == cuidadorId.Value);
+        }
+
+        var alertas = await query
+            .OrderByDescending(a => a.FechaCreacion)
+            .ToListAsync();
+
+        var resultado = alertas.Select(a => new
+        {
+            idAlerta = a.IdAlerta,
+            idPaciente = a.IdPaciente,
+            nombrePaciente = a.Paciente != null
+                ? $"{a.Paciente.NombrePaciente} {a.Paciente.ApellidosPacientes}".Trim()
+                : "Paciente",
+            fechaCreacion = DateTime.SpecifyKind(a.FechaCreacion, DateTimeKind.Utc),
+            idEstadoAlerta = a.IdEstadoAlerta,
+            estado = a.EstadoAlerta?.NombreEstado ?? "Atendida",
+            latitud = a.Latitud,
+            longitud = a.Longitud
+        }).ToList();
+
+        return Ok(resultado);
+    }
+
+    // ========================================================================
+    // 4. RESOLVER / ATENDER ALERTA
     // Endpoint: POST /api/alertas/resolver
     // ========================================================================
     [HttpPost("resolver")]
@@ -225,7 +276,7 @@ public class AlertasController : ControllerBase
     }
 
     // ========================================================================
-    // 4. REGISTRAR TOKEN FCM DE DISPOSITIVO PARA CUIDADOR
+    // 5. REGISTRAR TOKEN FCM DE DISPOSITIVO PARA CUIDADOR
     // Endpoint: POST /api/alertas/fcm-token
     // ========================================================================
     [HttpPost("fcm-token")]
@@ -238,15 +289,7 @@ public class AlertasController : ControllerBase
             return BadRequest(new { exito = false, mensaje = "El token FCM es requerido." });
         }
 
-        Guid usuarioId = Guid.Empty;
-        if (dto.IdUsuario.HasValue && dto.IdUsuario.Value != Guid.Empty)
-        {
-            usuarioId = dto.IdUsuario.Value;
-        }
-        else if (Guid.TryParse(userIdHeader, out var parsedId))
-        {
-            usuarioId = parsedId;
-        }
+        Guid usuarioId = User.ObtenerUsuarioId(Request) ?? dto.IdUsuario ?? Guid.Empty;
 
         if (usuarioId == Guid.Empty)
         {

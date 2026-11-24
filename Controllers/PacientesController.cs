@@ -9,14 +9,17 @@
 // ============================================================================
 
 using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
 using VitalBridge_Backend.DTOs;
+using VitalBridge_Backend.Extensions;
 using VitalBridge_Backend.Models;
 
 namespace VitalBridge_Backend.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/pacientes
 public class PacientesController : ControllerBase
@@ -24,8 +27,6 @@ public class PacientesController : ControllerBase
     private readonly ApplicationDbContext _context;
 
     // Alfabeto Base32 humanamente legible:
-    // Excluye intencionalmente números y letras ambiguas (como el 0 y la O, o el 1 y la I)
-    // para que adultos mayores o cuidadores no tengan problemas al teclear el código.
     private const string AlfabetoSeguro = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
     private static readonly Guid DummyId = Guid.Parse("00000000-0000-0000-0000-000000000001");
 
@@ -38,26 +39,18 @@ public class PacientesController : ControllerBase
     // 1. OBTENER PACIENTES DEL CUIDADOR
     // Endpoint: GET /api/pacientes
     // ========================================================================
-    // Soporta recibir el ID del cuidador ya sea por cabecera HTTP (X-User-Id) o Query Parameter (?idUsuario=...)
     [HttpGet]
-    public async Task<IActionResult> ObtenerPacientes([FromHeader(Name = "X-User-Id")] string? userIdHeader, [FromQuery] Guid? idUsuario)
+    public async Task<IActionResult> ObtenerPacientes(
+        [FromHeader(Name = "X-User-Id")] string? userIdHeader,
+        [FromQuery] Guid? idUsuario)
     {
-        Guid? cuidadorId = idUsuario;
-        if (!cuidadorId.HasValue && Guid.TryParse(userIdHeader, out var parsedId))
-        {
-            cuidadorId = parsedId;
-        }
+        Guid? cuidadorId = User.ObtenerUsuarioId(Request) ?? idUsuario;
 
-        // Si no se proporcionó un ID de cuidador válido, o es Guid.Empty, o es DummyId,
-        // retornamos lista vacía para no filtrar pacientes de otros usuarios.
         if (!cuidadorId.HasValue || cuidadorId.Value == Guid.Empty || cuidadorId.Value == DummyId)
         {
             return Ok(new List<PacienteRespuestaDto>());
         }
 
-        // Construcción de la consulta con Entity Framework Core:
-        // - Include: Trae la información relacionada del catálogo 'TipoPaciente' y los 'Tokens'.
-        // - Where: Filtra solo pacientes activos (IdEstadoPaciente == 1) que pertenezcan al cuidador autenticado.
         var query = _context.Pacientes
             .Include(p => p.TipoPaciente)
             .Include(p => p.Tokens)
@@ -67,7 +60,6 @@ public class PacientesController : ControllerBase
             .OrderByDescending(p => p.FechaRegistro)
             .ToListAsync();
 
-        // Mapeo manual a DTO para enviar a Flutter solo la información necesaria
         var resultado = pacientes.Select(p => new PacienteRespuestaDto
         {
             IdPaciente = p.IdPaciente,
@@ -97,11 +89,7 @@ public class PacientesController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        Guid idUsuario = dto.IdUsuario ?? Guid.Empty;
-        if (idUsuario == Guid.Empty && Guid.TryParse(userIdHeader, out var parsedId))
-        {
-            idUsuario = parsedId;
-        }
+        Guid idUsuario = User.ObtenerUsuarioId(Request) ?? dto.IdUsuario ?? Guid.Empty;
 
         if (idUsuario == Guid.Empty || idUsuario == DummyId)
         {
@@ -114,7 +102,6 @@ public class PacientesController : ControllerBase
             return BadRequest(new { exito = false, mensaje = "El cuidador especificado no existe en el sistema." });
         }
 
-        // PASO 1: Generación de Token con Garantía Anti-Colisión (Garantiza unicidad en la base de datos)
         string tokenSeguro;
         do
         {
@@ -122,7 +109,6 @@ public class PacientesController : ControllerBase
         }
         while (await _context.TokensPaciente.AnyAsync(t => t.Token == tokenSeguro));
 
-        // PASO 2: Instanciar la entidad Paciente
         var paciente = new Paciente
         {
             IdPaciente = Guid.NewGuid(),
@@ -136,7 +122,6 @@ public class PacientesController : ControllerBase
             FechaRegistro = DateTime.UtcNow
         };
 
-        // PASO 3: Vincular el token criptográfico al paciente
         var tokenRegistro = new TokenPaciente
         {
             Token = tokenSeguro,
@@ -149,7 +134,6 @@ public class PacientesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        // Retorna HTTP 201 Created con el recurso recién creado
         return CreatedAtAction(nameof(ObtenerPacientes), new { id = paciente.IdPaciente }, new
         {
             exito = true,
@@ -174,9 +158,6 @@ public class PacientesController : ControllerBase
     // 3. BORRADO LÓGICO (Soft Delete) DE PACIENTES
     // Endpoint: DELETE /api/pacientes/{id}
     // ========================================================================
-    // En sistemas médicos no se debe borrar físicamente una fila (Hard Delete)
-    // para no destruir el historial clínico ni los tratamientos pasados.
-    // En su lugar, se cambia el estado a Inactivo (IdEstadoPaciente = 2).
     [HttpDelete("{id}")]
     public async Task<IActionResult> EliminarPaciente(Guid id)
     {
@@ -232,13 +213,6 @@ public class PacientesController : ControllerBase
         });
     }
 
-    // ========================================================================
-    // FUNCIÓN AUXILIAR: GENERADOR CRIPTOGRÁFICO DE TOKENS
-    // Formato: VB-XXXX-XXXX (ejemplo: VB-A7K9-W3MZ)
-    // ========================================================================
-    // Usa RandomNumberGenerator (generador criptográficamente fuerte) en lugar
-    // de new Random() para garantizar que los códigos no sean predecibles.
-    // Espacio de combinaciones: 32^8 = 1,099,511,627,776 combinaciones posibles.
     private static string GenerarTokenSeguro()
     {
         var bytes = new byte[8];

@@ -1,18 +1,21 @@
-﻿// ============================================================================
+// ============================================================================
 // CONTROLADOR DE PERFILES Y FOTOS DE PERFIL (PerfilesController.cs)
 // ============================================================================
 // Este controlador gestiona:
-// 1. Subida de fotos de perfil hacia Supabase Storage y actualizaciÃ³n en PostgreSQL.
+// 1. Subida de fotos de perfil hacia Supabase Storage y actualización en PostgreSQL.
 // 2. Consulta de datos de perfil del cuidador.
-// 3. EdiciÃ³n de datos personales del cuidador (Nombre, Apellidos, TelÃ©fono).
+// 3. Edición de datos personales del cuidador (Nombre, Apellidos, Teléfono).
 // ============================================================================
 
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
+using VitalBridge_Backend.Extensions;
 
 namespace VitalBridge_Backend.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/perfiles
 public class PerfilesController : ControllerBase
@@ -35,18 +38,16 @@ public class PerfilesController : ControllerBase
     // 1. SUBIDA DE FOTO DE PERFIL (Cuidador o Paciente)
     // Endpoint: POST /api/perfiles/foto
     // ========================================================================
-    // Recibe la imagen mediante 'multipart/form-data'. La transmite a Supabase
-    // Storage y guarda la URL pÃºblica en el campo 'foto' o 'foto_paciente'.
     [HttpPost("foto")]
     public async Task<IActionResult> SubirFotoPerfil(
-        [FromForm] IFormFile? archivo, // Archivo binario enviado por la app mÃ³vil
+        [FromForm] IFormFile? archivo, // Archivo binario enviado por la app móvil
         [FromForm] string tipo,        // Identificador: "usuario" o "paciente"
         [FromForm] Guid id)            // UUID del usuario o del paciente
     {
-        // ValidaciÃ³n: Asegurar que el archivo no venga vacÃ­o
+        // Validación: Asegurar que el archivo no venga vacío
         if (archivo == null || archivo.Length == 0)
         {
-            return BadRequest(new { exito = false, mensaje = "Debe enviar un archivo de imagen vÃ¡lido." });
+            return BadRequest(new { exito = false, mensaje = "Debe enviar un archivo de imagen válido." });
         }
 
         var tipoLimpio = tipo.Trim().ToLower();
@@ -60,33 +61,28 @@ public class PerfilesController : ControllerBase
 
         if (string.IsNullOrEmpty(supabaseUrl) || string.IsNullOrEmpty(supabaseAnonKey))
         {
-            return StatusCode(500, new { exito = false, mensaje = "La configuraciÃ³n de Supabase no estÃ¡ completa." });
+            return StatusCode(500, new { exito = false, mensaje = "La configuración de Supabase no está completa." });
         }
 
         try
         {
-            // PASO 1: Definir la ruta del archivo dentro del bucket 'perfiles'
-            // Ejemplo: "usuarios/1e8a6250-...jpg" o "pacientes/3f9b1234-...jpg"
             var rutaObjeto = $"{tipoLimpio}s/{id}.jpg";
             var urlSubida = $"{supabaseUrl}/storage/v1/object/perfiles/{rutaObjeto}";
 
             var client = _httpClientFactory.CreateClient();
 
-            // PASO 2: Abrir flujo binario (Stream) de la imagen para transmitirla
             using var stream = archivo.OpenReadStream();
             using var content = new StreamContent(stream);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(archivo.ContentType ?? "image/jpeg");
 
-            // PASO 3: Construir peticiÃ³n POST a la API de Supabase Storage
             var request = new HttpRequestMessage(HttpMethod.Post, urlSubida);
             request.Headers.Add("apikey", supabaseAnonKey);
             request.Headers.Add("Authorization", $"Bearer {supabaseAnonKey}");
-            request.Headers.Add("x-upsert", "true"); // Sobrescribe la foto anterior si ya existÃ­a una
+            request.Headers.Add("x-upsert", "true");
             request.Content = content;
 
             var response = await client.SendAsync(request);
 
-            // Si Supabase Storage rechaza la subida, devolvemos el error exacto
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
@@ -98,10 +94,8 @@ public class PerfilesController : ControllerBase
                 });
             }
 
-            // PASO 4: Construir la URL pÃºblica permanente del archivo alojado en la nube
             var publicUrl = $"{supabaseUrl}/storage/v1/object/public/perfiles/{rutaObjeto}?v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
-            // PASO 5: Actualizar la base de datos relacional (PostgreSQL) con la nueva URL
             if (tipoLimpio == "usuario")
             {
                 var usuario = await _context.Usuarios.FindAsync(id);
@@ -121,7 +115,6 @@ public class PerfilesController : ControllerBase
                 }
             }
 
-            // PASO 6: Responder al mÃ³vil con la URL pÃºblica para actualizar la vista de inmediato
             return Ok(new
             {
                 exito = true,
@@ -147,7 +140,8 @@ public class PerfilesController : ControllerBase
     [HttpGet("usuario/{id}")]
     public async Task<IActionResult> ObtenerPerfilUsuario(Guid id)
     {
-        var usuario = await _context.Usuarios.FindAsync(id);
+        var targetId = User.ObtenerUsuarioId(Request) ?? id;
+        var usuario = await _context.Usuarios.FindAsync(targetId);
         if (usuario == null)
             return NotFound(new { exito = false, mensaje = "Usuario no encontrado." });
 
@@ -171,11 +165,11 @@ public class PerfilesController : ControllerBase
     [HttpPut("usuario/{id}")]
     public async Task<IActionResult> ActualizarPerfilUsuario(Guid id, [FromBody] ActualizarUsuarioDto dto)
     {
-        var usuario = await _context.Usuarios.FindAsync(id);
+        var targetId = User.ObtenerUsuarioId(Request) ?? id;
+        var usuario = await _context.Usuarios.FindAsync(targetId);
         if (usuario == null)
             return NotFound(new { exito = false, mensaje = "Usuario no encontrado." });
 
-        // Solo actualizamos los campos que el usuario haya modificado
         if (!string.IsNullOrWhiteSpace(dto.Nombre)) usuario.Nombre = dto.Nombre.Trim();
         if (!string.IsNullOrWhiteSpace(dto.Apellidos)) usuario.Apellidos = dto.Apellidos.Trim();
         if (!string.IsNullOrWhiteSpace(dto.Telefono)) usuario.Telefono = dto.Telefono.Trim();
@@ -190,7 +184,6 @@ public class PerfilesController : ControllerBase
     }
 }
 
-// Objeto de Transferencia de Datos (DTO) para la actualizaciÃ³n de perfil
 public class ActualizarUsuarioDto
 {
     public string? Nombre { get; set; }

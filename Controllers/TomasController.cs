@@ -4,18 +4,22 @@
 // Administra las tomas programadas y el registro de confirmación de medicamentos
 // para el paciente en VitalBridge:
 // 1. Obtener tomas de hoy: GET /api/tomas/hoy?pacienteId={guid}
-// 2. Confirmar toma realizada: POST /api/tomas/confirmar
+// 2. Obtener historial de tomas por fecha: GET /api/tomas/historial?pacienteId={guid}&fecha=YYYY-MM-DD
+// 3. Confirmar toma realizada: POST /api/tomas/confirmar
 // ============================================================================
 
 using System.Globalization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using VitalBridge_Backend.Data;
 using VitalBridge_Backend.DTOs;
+using VitalBridge_Backend.Extensions;
 using VitalBridge_Backend.Models;
 
 namespace VitalBridge_Backend.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/tomas
 public class TomasController : ControllerBase
@@ -30,37 +34,49 @@ public class TomasController : ControllerBase
     }
 
     // ========================================================================
-    // 1. OBTENER TOMAS DEL DÍA DE HOY PARA UN PACIENTE
-    // Endpoint: GET /api/tomas/hoy?pacienteId={guid}
+    // 1. OBTENER TOMAS DEL DÍA DE HOY O HISTORIAL POR FECHA
+    // Endpoints:
+    //   GET /api/tomas/hoy?pacienteId={guid}&fecha=YYYY-MM-DD
+    //   GET /api/tomas/historial?pacienteId={guid}&fecha=YYYY-MM-DD
     // ========================================================================
     [HttpGet("hoy")]
-    public async Task<IActionResult> ObtenerTomasHoy(
+    [HttpGet("historial")]
+    public async Task<IActionResult> ObtenerTomas(
         [FromQuery] Guid? pacienteId,
         [FromQuery] DateTime? fecha,
         [FromHeader(Name = "X-User-Id")] string? userIdHeader)
     {
+        var usuarioIdAutenticado = User.ObtenerUsuarioId(Request);
+
         var query = _context.Horarios
             .Include(h => h.Tratamiento)
                 .ThenInclude(t => t!.UnidadMedida)
             .Include(h => h.Toma)
                 .ThenInclude(t => t!.EstadoToma)
-            .Where(h => h.Tratamiento != null && h.Tratamiento.IdEstadoTratamiento == 1);
+            .AsQueryable();
 
-        // Filtrado por paciente o cuidador
+        // Si es consulta en vivo (hoy sin fecha histórica específica), filtramos por tratamientos activos.
+        // Si es consulta de historial por fecha, permitimos mostrar tomas de tratamientos finalizados.
+        if (!fecha.HasValue)
+        {
+            query = query.Where(h => h.Tratamiento != null && h.Tratamiento.IdEstadoTratamiento == 1);
+        }
+
+        // Filtrado de seguridad: solo consultar datos de los pacientes vinculados al cuidador
         if (pacienteId.HasValue && pacienteId.Value != Guid.Empty)
         {
             query = query.Where(h => h.IdPaciente == pacienteId.Value);
         }
-        else if (Guid.TryParse(userIdHeader, out var parsedUser) && parsedUser != Guid.Empty)
+        else if (usuarioIdAutenticado.HasValue && usuarioIdAutenticado.Value != Guid.Empty)
         {
-            query = query.Where(h => h.IdUsuario == parsedUser || h.IdPaciente == parsedUser);
+            query = query.Where(h => h.IdUsuario == usuarioIdAutenticado.Value || h.IdPaciente == usuarioIdAutenticado.Value);
         }
         else
         {
             return BadRequest(new
             {
                 exito = false,
-                mensaje = "El parámetro pacienteId o el encabezado X-User-Id es obligatorio."
+                mensaje = "El parámetro pacienteId o la autenticación del usuario es obligatoria."
             });
         }
 
@@ -74,8 +90,8 @@ public class TomasController : ControllerBase
             .OrderBy(h => h.Dia)
             .ToListAsync();
 
-        // Si no hay horarios exactos en la ventana estricta de 24h, consultar una ventana flexible
-        // para absorber desfases de zona horaria entre servidor y dispositivo móvil
+        // Si no hay horarios exactos en la ventana estricta de 24h y es consulta de hoy,
+        // consultar una ventana flexible para absorber desfases de zona horaria
         if (!horarios.Any() && !fecha.HasValue)
         {
             var ventanaInicio = inicioDia.AddHours(-12);
@@ -130,6 +146,7 @@ public class TomasController : ControllerBase
     // 2. CONFIRMAR TOMA DE MEDICAMENTO
     // Endpoint: POST /api/tomas/confirmar
     // ========================================================================
+    [AllowAnonymous] // Permitir al modo paciente registrar su toma sin necesidad de sesión de cuidador
     [HttpPost("confirmar")]
     public async Task<IActionResult> ConfirmarToma([FromBody] ConfirmarTomaDto dto)
     {
@@ -157,9 +174,9 @@ public class TomasController : ControllerBase
         }
 
         // 2. Resolver IdEstadoToma para estado 'Tomada'
-        int idEstadoTomada = 2; // Valor estándar en catálogo
+        int idEstadoTomada = 1;
         var estadoCatalogo = await _context.EstadosToma
-            .FirstOrDefaultAsync(e => e.NombreEstado.ToLower() == "tomada" || e.IdEstadoToma == 2 || e.IdEstadoToma == 1);
+            .FirstOrDefaultAsync(e => e.NombreEstado.ToLower() == "tomada" || e.IdEstadoToma == 1);
 
         if (estadoCatalogo != null)
         {

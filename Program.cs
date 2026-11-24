@@ -5,7 +5,11 @@
 // de Inyección de Dependencias (DI) y define el pipeline de procesamiento HTTP (Middlewares).
 // ============================================================================
 
+using System.Security.Claims;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using VitalBridge_Backend.Data;
 
 // 1. Inicialización del Constructor (Builder)
@@ -13,29 +17,66 @@ using VitalBridge_Backend.Data;
 var builder = WebApplication.CreateBuilder(args);
 
 // 2. Obtención de la Cadena de Conexión a la Base de Datos (PostgreSQL en Supabase)
-// El operador '??' busca 'DefaultConnection' y si es nula, usa 'SupabaseConnection' como respaldo.
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                     ?? builder.Configuration.GetConnectionString("SupabaseConnection");
 
 // 3. Registro de Entity Framework Core (ORM)
-// Se inyecta 'ApplicationDbContext' configurado con Npgsql para conectar con PostgreSQL.
-// Ciclo de vida: Scoped (una instancia por cada petición HTTP).
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 4. Registro de Controladores de la API (Controllers)
-// Permite que ASP.NET detecte clases como AuthController, PacientesController, etc.
+// 4. Configuración de Autenticación con Token JWT (Supabase Auth)
+var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
+var jwtSecret = builder.Configuration["Supabase:JwtSecret"]
+             ?? builder.Configuration["Jwt:Secret"]
+             ?? builder.Configuration["Supabase:AnonKey"];
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = false;
+    options.SaveToken = true;
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuerSigningKey = !string.IsNullOrEmpty(jwtSecret),
+        IssuerSigningKey = !string.IsNullOrEmpty(jwtSecret)
+            ? new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
+            : null,
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ValidateLifetime = true,
+        NameClaimType = ClaimTypes.NameIdentifier
+    };
+
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var token = context.Request.Headers["Authorization"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(token) && token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Token = token.Substring("Bearer ".Length).Trim();
+            }
+            return Task.CompletedTask;
+        }
+    };
+});
+
+builder.Services.AddAuthorization();
+
+// 5. Registro de Controladores de la API (Controllers)
 builder.Services.AddControllers();
 
-// 5. Registro de IHttpClientFactory
-// Administra de forma eficiente un pool de conexiones HTTP para peticiones salientes
-// (por ejemplo, cuando el backend se conecta con Supabase Storage para subir fotos).
+// 6. Registro de IHttpClientFactory
 builder.Services.AddHttpClient();
 
-// 5.1 Registro de Servicio de Notificaciones Push con Firebase Cloud Messaging
+// 6.1 Registro de Servicio de Notificaciones Push con Firebase Cloud Messaging
 builder.Services.AddSingleton<VitalBridge_Backend.Services.FirebaseNotificationService>();
 
-// 6. Configuración de Documentación OpenAPI (Swagger en .NET 9)
+// 7. Configuración de Documentación OpenAPI (Swagger en .NET 9)
 builder.Services.AddOpenApi();
 
 // ============================================================================
@@ -43,33 +84,28 @@ builder.Services.AddOpenApi();
 // ============================================================================
 var app = builder.Build();
 
-// 7. Configuración del Pipeline de Peticiones HTTP (Middlewares)
-// Si estamos en entorno de desarrollo, exponemos la documentación interactiva OpenAPI.
+// 8. Configuración del Pipeline de Peticiones HTTP (Middlewares)
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
-// Redirecciona automáticamente peticiones HTTP inseguras hacia HTTPS.
 app.UseHttpsRedirection();
 
-// Middleware de autorización para validar permisos y roles en endpoints protegidos.
+// Middlewares de seguridad: autenticación primero, luego autorización
+app.UseAuthentication();
 app.UseAuthorization();
 
-// Mapea las rutas URL entrantes a los métodos correspondientes en los controladores.
 app.MapControllers();
 
 // ============================================================================
-// 8. SEMBRADO DE DATOS INICIALES (Data Seeding)
+// 9. SEMBRADO DE DATOS INICIALES (Data Seeding)
 // ============================================================================
-// Como ApplicationDbContext es Scoped, creamos un alcance temporal (Scope) para
-// obtener el contexto y ejecutar DbSeeder antes de abrir el puerto a los clientes.
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     await DbSeeder.SeedAsync(context);
 }
 
-// 9. Puesta en Marcha del Servidor
-// Pone al servidor Kestrel a escuchar peticiones en el puerto configurado (ej. 5113).
+// 10. Puesta en Marcha del Servidor
 app.Run();
