@@ -80,8 +80,10 @@ public class TomasController : ControllerBase
             });
         }
 
-        // Definimos la ventana de tiempo (por defecto UTC del día indicado o hoy)
-        var fechaReferencia = (fecha ?? DateTime.UtcNow).Date;
+        // Definimos la ventana de tiempo. Si no se pasa fecha, usamos la fecha local del cliente
+        // calculada a partir de UTC con ajuste para zonas horarias de México/América (UTC-8 a UTC-6)
+        var ahoraLocal = DateTime.UtcNow.AddHours(-8);
+        var fechaReferencia = (fecha ?? ahoraLocal).Date;
         var inicioDia = DateTime.SpecifyKind(fechaReferencia, DateTimeKind.Utc);
         var finDia = inicioDia.AddDays(1);
 

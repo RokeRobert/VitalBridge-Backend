@@ -359,7 +359,9 @@ public class TratamientosController : ControllerBase
         // Horizonte de generación de tomas
         // Si no tiene fecha final, generamos un lote inicial de 14 días
         var fechaInicio = tratamiento.FechaInicio;
-        var hoy = DateOnly.FromDateTime(DateTime.UtcNow);
+        // Ajuste de 12h hacia atrás sobre UTC para que registros hechos de noche en México (UTC-8 a UTC-6)
+        // no adelanten la fecha de inicio al día siguiente
+        var hoy = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-12));
         var inicio = fechaInicio < hoy ? hoy : fechaInicio;
 
         DateOnly fechaFin;
