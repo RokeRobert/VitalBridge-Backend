@@ -74,7 +74,8 @@ public class FirebaseNotificationService
         double? latitud,
         double? longitud,
         int idAlerta,
-        Guid? idPaciente = null)
+        Guid? idPaciente = null,
+        string? telefono = null)
     {
         if (!_inicializado || tokens == null || tokens.Count == 0)
         {
@@ -99,6 +100,7 @@ public class FirebaseNotificationService
                 { "idAlerta", idAlerta.ToString() },
                 { "idPaciente", idPaciente?.ToString() ?? "" },
                 { "nombrePaciente", nombrePaciente },
+                { "telefono", telefono ?? "" },
                 { "latitud", latitud?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "" },
                 { "longitud", longitud?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "" },
                 { "fechaHora", DateTime.UtcNow.ToString("o") }

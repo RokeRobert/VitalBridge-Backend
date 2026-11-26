@@ -110,7 +110,8 @@ public class AlertasController : ControllerBase
                     dto.Latitud,
                     dto.Longitud,
                     nuevaAlerta.IdAlerta,
-                    dto.IdPaciente);
+                    dto.IdPaciente,
+                    paciente.Telefono);
             }
             else
             {
@@ -129,6 +130,7 @@ public class AlertasController : ControllerBase
             idAlerta = nuevaAlerta.IdAlerta,
             idPaciente = nuevaAlerta.IdPaciente,
             nombrePaciente = nombreCompleto,
+            telefono = paciente.Telefono ?? "",
             fechaCreacion = DateTime.SpecifyKind(nuevaAlerta.FechaCreacion, DateTimeKind.Utc),
             idEstadoAlerta = nuevaAlerta.IdEstadoAlerta,
             estado = "Activa",
@@ -180,6 +182,7 @@ public class AlertasController : ControllerBase
             nombrePaciente = a.Paciente != null
                 ? $"{a.Paciente.NombrePaciente} {a.Paciente.ApellidosPacientes}".Trim()
                 : "Paciente",
+            telefono = a.Paciente?.Telefono ?? "",
             fechaCreacion = DateTime.SpecifyKind(a.FechaCreacion, DateTimeKind.Utc),
             idEstadoAlerta = a.IdEstadoAlerta,
             estado = a.EstadoAlerta?.NombreEstado ?? "Activa",
@@ -229,6 +232,7 @@ public class AlertasController : ControllerBase
             nombrePaciente = a.Paciente != null
                 ? $"{a.Paciente.NombrePaciente} {a.Paciente.ApellidosPacientes}".Trim()
                 : "Paciente",
+            telefono = a.Paciente?.Telefono ?? "",
             fechaCreacion = DateTime.SpecifyKind(a.FechaCreacion, DateTimeKind.Utc),
             idEstadoAlerta = a.IdEstadoAlerta,
             estado = a.EstadoAlerta?.NombreEstado ?? "Atendida",
