@@ -154,6 +154,42 @@ public class AuthController : ControllerBase
             {
                 token = tokenProp.GetString();
             }
+            else if (root.TryGetProperty("session", out var sessionProp) && sessionProp.TryGetProperty("access_token", out var sessionTokenProp))
+            {
+                token = sessionTokenProp.GetString();
+            }
+
+            // Si no vino el token en el registro, intentar auto-login inmediato con las mismas credenciales
+            if (string.IsNullOrEmpty(token))
+            {
+                try
+                {
+                    var loginUrl = $"{supabaseUrl}/auth/v1/token?grant_type=password";
+                    var loginPayload = new
+                    {
+                        email = dto.Correo.Trim(),
+                        password = dto.Contrasena
+                    };
+                    var loginReq = new HttpRequestMessage(HttpMethod.Post, loginUrl);
+                    loginReq.Headers.Add("apikey", supabaseAnonKey);
+                    loginReq.Content = new StringContent(
+                        JsonSerializer.Serialize(loginPayload),
+                        Encoding.UTF8,
+                        "application/json");
+
+                    var loginResp = await client.SendAsync(loginReq);
+                    if (loginResp.IsSuccessStatusCode)
+                    {
+                        var loginBody = await loginResp.Content.ReadAsStringAsync();
+                        using var loginDoc = JsonDocument.Parse(loginBody);
+                        if (loginDoc.RootElement.TryGetProperty("access_token", out var autoTokenProp))
+                        {
+                            token = autoTokenProp.GetString();
+                        }
+                    }
+                }
+                catch { }
+            }
 
             bool requiereConfirmacion = string.IsNullOrEmpty(token);
 
