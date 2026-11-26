@@ -127,4 +127,19 @@ public class ReenviarConfirmacionDto
     public string Correo { get; set; } = string.Empty;
 }
 
+public class GoogleSyncDto
+{
+    [Required]
+    public Guid IdUsuario { get; set; }
+
+    [Required]
+    [EmailAddress]
+    public string Correo { get; set; } = string.Empty;
+
+    public string? Nombre { get; set; }
+    public string? Apellidos { get; set; }
+    public string? Foto { get; set; }
+}
+
+
 

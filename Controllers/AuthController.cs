@@ -630,4 +630,65 @@ public class AuthController : ControllerBase
             });
         }
     }
+
+    // ========================================================================
+    // 7. SINCRONIZAR USUARIO AUTENTICADO CON GOOGLE
+    // Endpoint: POST /api/auth/google-sync
+    // ========================================================================
+    [HttpPost("google-sync")]
+    public async Task<IActionResult> SincronizarUsuarioGoogle([FromBody] GoogleSyncDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        try
+        {
+            var usuario = await _context.Usuarios.FirstOrDefaultAsync(u => u.IdUsuario == dto.IdUsuario);
+            if (usuario == null)
+            {
+                usuario = new Usuario
+                {
+                    IdUsuario = dto.IdUsuario,
+                    Correo = dto.Correo.Trim(),
+                    Nombre = string.IsNullOrWhiteSpace(dto.Nombre) ? "Cuidador" : dto.Nombre.Trim(),
+                    Apellidos = string.IsNullOrWhiteSpace(dto.Apellidos) ? "" : dto.Apellidos.Trim(),
+                    Telefono = "",
+                    Foto = dto.Foto,
+                    IdEstadoUsuario = 1,
+                    FechaRegistro = DateTime.UtcNow
+                };
+                _context.Usuarios.Add(usuario);
+                await _context.SaveChangesAsync();
+            }
+            else
+            {
+                bool modificado = false;
+                if (string.IsNullOrWhiteSpace(usuario.Foto) && !string.IsNullOrWhiteSpace(dto.Foto))
+                {
+                    usuario.Foto = dto.Foto;
+                    modificado = true;
+                }
+                if (usuario.Nombre == "Cuidador" && !string.IsNullOrWhiteSpace(dto.Nombre))
+                {
+                    usuario.Nombre = dto.Nombre.Trim();
+                    modificado = true;
+                }
+                if (modificado)
+                {
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            return Ok(new { exito = true, mensaje = "Usuario sincronizado correctamente." });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                exito = false,
+                mensaje = "Error al sincronizar usuario de Google.",
+                detalle = ex.Message
+            });
+        }
+    }
 }
