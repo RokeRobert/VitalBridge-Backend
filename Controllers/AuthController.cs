@@ -7,6 +7,7 @@
 // 3. Inicio de sesión de pacientes (Vinculación simplificada mediante Token/código QR).
 // ============================================================================
 
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
@@ -154,11 +155,16 @@ public class AuthController : ControllerBase
                 token = tokenProp.GetString();
             }
 
+            bool requiereConfirmacion = string.IsNullOrEmpty(token);
+
             // PASO 5: Responder a Flutter con HTTP 200 OK y el DTO con datos del usuario
             return Ok(new
             {
                 exito = true,
-                mensaje = "Usuario registrado exitosamente.",
+                mensaje = requiereConfirmacion
+                    ? "Usuario registrado. Por favor revisa tu bandeja de entrada o spam para confirmar tu correo antes de iniciar sesión."
+                    : "Usuario registrado exitosamente.",
+                requiereConfirmacion,
                 usuario = new UsuarioRespuestaDto
                 {
                     IdUsuario = usuario.IdUsuario,
@@ -239,6 +245,11 @@ public class AuthController : ControllerBase
                     }
                 }
                 catch { }
+
+                if (mensajeError.Contains("Email not confirmed", StringComparison.OrdinalIgnoreCase))
+                {
+                    mensajeError = "Tu correo electrónico no ha sido confirmado. Revisa tu bandeja de entrada o solicita un nuevo enlace de activación.";
+                }
 
                 return Unauthorized(new
                 {
@@ -354,5 +365,269 @@ public class AuthController : ControllerBase
                 Token = tokenRegistro.Token
             }
         });
+    }
+
+    // ========================================================================
+    // 4. SOLICITUD DE RECUPERACIÓN DE CONTRASEÑA
+    // Endpoint: POST /api/auth/recuperar-password
+    // ========================================================================
+    [HttpPost("recuperar-password")]
+    public async Task<IActionResult> RecuperarPassword([FromBody] RecuperarPasswordDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var supabaseUrl = _configuration["Supabase:Url"]?.TrimEnd('/');
+        var supabaseAnonKey = _configuration["Supabase:AnonKey"];
+
+        if (string.IsNullOrEmpty(supabaseUrl) || string.IsNullOrEmpty(supabaseAnonKey))
+        {
+            return StatusCode(500, new { exito = false, mensaje = "La configuración de Supabase no está completa." });
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            var recoverUrl = $"{supabaseUrl}/auth/v1/recover";
+
+            var payload = new
+            {
+                email = dto.Correo.Trim().ToLower()
+            };
+
+            var request = new HttpRequestMessage(HttpMethod.Post, recoverUrl);
+            request.Headers.Add("apikey", supabaseAnonKey);
+            request.Content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await client.SendAsync(request);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string mensajeError = "No fue posible procesar la solicitud de recuperación.";
+                try
+                {
+                    using var errDoc = JsonDocument.Parse(responseBody);
+                    if (errDoc.RootElement.TryGetProperty("msg", out var m))
+                        mensajeError = m.GetString() ?? mensajeError;
+                    else if (errDoc.RootElement.TryGetProperty("error_description", out var ed))
+                        mensajeError = ed.GetString() ?? mensajeError;
+                }
+                catch { }
+
+                return BadRequest(new { exito = false, mensaje = mensajeError });
+            }
+
+            return Ok(new
+            {
+                exito = true,
+                mensaje = "Se ha enviado un código de recuperación a tu correo electrónico."
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                exito = false,
+                mensaje = "Ocurrió un error al solicitar la recuperación de contraseña.",
+                detalle = ex.Message
+            });
+        }
+    }
+
+    // ========================================================================
+    // 5. RESTABLECER CONTRASEÑA MEDIANTE CÓDIGO OTP
+    // Endpoint: POST /api/auth/restablecer-password
+    // ========================================================================
+    [HttpPost("restablecer-password")]
+    public async Task<IActionResult> RestablecerPassword([FromBody] RestablecerPasswordDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var supabaseUrl = _configuration["Supabase:Url"]?.TrimEnd('/');
+        var supabaseAnonKey = _configuration["Supabase:AnonKey"];
+
+        if (string.IsNullOrEmpty(supabaseUrl) || string.IsNullOrEmpty(supabaseAnonKey))
+        {
+            return StatusCode(500, new { exito = false, mensaje = "La configuración de Supabase no está completa." });
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+
+            // PASO 1: Validar el código OTP contra Supabase Auth
+            var verifyUrl = $"{supabaseUrl}/auth/v1/verify";
+            var verifyPayload = new
+            {
+                type = "recovery",
+                email = dto.Correo.Trim().ToLower(),
+                token = dto.Codigo.Trim()
+            };
+
+            var verifyReq = new HttpRequestMessage(HttpMethod.Post, verifyUrl);
+            verifyReq.Headers.Add("apikey", supabaseAnonKey);
+            verifyReq.Content = new StringContent(
+                JsonSerializer.Serialize(verifyPayload),
+                Encoding.UTF8,
+                "application/json");
+
+            var verifyResp = await client.SendAsync(verifyReq);
+            var verifyBody = await verifyResp.Content.ReadAsStringAsync();
+
+            if (!verifyResp.IsSuccessStatusCode)
+            {
+                string mensajeError = "El código de verificación es incorrecto o ha expirado.";
+                try
+                {
+                    using var errDoc = JsonDocument.Parse(verifyBody);
+                    if (errDoc.RootElement.TryGetProperty("msg", out var m))
+                        mensajeError = m.GetString() ?? mensajeError;
+                    else if (errDoc.RootElement.TryGetProperty("error_description", out var ed))
+                        mensajeError = ed.GetString() ?? mensajeError;
+                }
+                catch { }
+
+                return BadRequest(new { exito = false, mensaje = mensajeError });
+            }
+
+            // PASO 2: Extraer el token de acceso temporal de recuperación
+            using var doc = JsonDocument.Parse(verifyBody);
+            string? tempToken = null;
+            if (doc.RootElement.TryGetProperty("access_token", out var tokenProp))
+            {
+                tempToken = tokenProp.GetString();
+            }
+
+            if (string.IsNullOrEmpty(tempToken))
+            {
+                return BadRequest(new { exito = false, mensaje = "No se pudo validar la autorización de cambio de contraseña." });
+            }
+
+            // PASO 3: Actualizar la contraseña del usuario en Supabase Auth
+            var updateUrl = $"{supabaseUrl}/auth/v1/user";
+            var updatePayload = new
+            {
+                password = dto.NuevaContrasena
+            };
+
+            var updateReq = new HttpRequestMessage(HttpMethod.Put, updateUrl);
+            updateReq.Headers.Add("apikey", supabaseAnonKey);
+            updateReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tempToken);
+            updateReq.Content = new StringContent(
+                JsonSerializer.Serialize(updatePayload),
+                Encoding.UTF8,
+                "application/json");
+
+            var updateResp = await client.SendAsync(updateReq);
+            var updateBody = await updateResp.Content.ReadAsStringAsync();
+
+            if (!updateResp.IsSuccessStatusCode)
+            {
+                string mensajeError = "No se pudo actualizar la contraseña. Verifica que cumpla con los requisitos mínimos de seguridad.";
+                try
+                {
+                    using var errDoc = JsonDocument.Parse(updateBody);
+                    if (errDoc.RootElement.TryGetProperty("msg", out var m))
+                        mensajeError = m.GetString() ?? mensajeError;
+                    else if (errDoc.RootElement.TryGetProperty("error_description", out var ed))
+                        mensajeError = ed.GetString() ?? mensajeError;
+                }
+                catch { }
+
+                return BadRequest(new { exito = false, mensaje = mensajeError });
+            }
+
+            return Ok(new
+            {
+                exito = true,
+                mensaje = "Contraseña restablecida exitosamente. Ya puedes iniciar sesión con tu nueva contraseña."
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                exito = false,
+                mensaje = "Ocurrió un error al restablecer la contraseña.",
+                detalle = ex.Message
+            });
+        }
+    }
+
+    // ========================================================================
+    // 6. REENVIAR CORREO DE CONFIRMACIÓN
+    // Endpoint: POST /api/auth/reenviar-confirmacion
+    // ========================================================================
+    [HttpPost("reenviar-confirmacion")]
+    public async Task<IActionResult> ReenviarConfirmacion([FromBody] ReenviarConfirmacionDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var supabaseUrl = _configuration["Supabase:Url"]?.TrimEnd('/');
+        var supabaseAnonKey = _configuration["Supabase:AnonKey"];
+
+        if (string.IsNullOrEmpty(supabaseUrl) || string.IsNullOrEmpty(supabaseAnonKey))
+        {
+            return StatusCode(500, new { exito = false, mensaje = "La configuración de Supabase no está completa." });
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            var resendUrl = $"{supabaseUrl}/auth/v1/resend";
+
+            var payload = new
+            {
+                type = "signup",
+                email = dto.Correo.Trim().ToLower()
+            };
+
+            var request = new HttpRequestMessage(HttpMethod.Post, resendUrl);
+            request.Headers.Add("apikey", supabaseAnonKey);
+            request.Content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await client.SendAsync(request);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string mensajeError = "No se pudo reenviar el correo de confirmación.";
+                try
+                {
+                    using var errDoc = JsonDocument.Parse(responseBody);
+                    if (errDoc.RootElement.TryGetProperty("msg", out var m))
+                        mensajeError = m.GetString() ?? mensajeError;
+                    else if (errDoc.RootElement.TryGetProperty("error_description", out var ed))
+                        mensajeError = ed.GetString() ?? mensajeError;
+                }
+                catch { }
+
+                return BadRequest(new { exito = false, mensaje = mensajeError });
+            }
+
+            return Ok(new
+            {
+                exito = true,
+                mensaje = "Correo de confirmación reenviado exitosamente. Revisa tu bandeja de entrada o spam."
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                exito = false,
+                mensaje = "Ocurrió un error al reenviar el correo de confirmación.",
+                detalle = ex.Message
+            });
+        }
     }
 }

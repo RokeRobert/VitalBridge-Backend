@@ -98,3 +98,33 @@ public class ActualizarPacienteDto
     public string? FotoPaciente { get; set; }
 }
 
+public class RecuperarPasswordDto
+{
+    [Required(ErrorMessage = "El correo es obligatorio.")]
+    [EmailAddress(ErrorMessage = "El formato de correo es inválido.")]
+    public string Correo { get; set; } = string.Empty;
+}
+
+public class RestablecerPasswordDto
+{
+    [Required(ErrorMessage = "El correo es obligatorio.")]
+    [EmailAddress(ErrorMessage = "El formato de correo es inválido.")]
+    public string Correo { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "El código de verificación es obligatorio.")]
+    [MinLength(6, ErrorMessage = "El código debe tener al menos 6 dígitos.")]
+    public string Codigo { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "La nueva contraseña es obligatoria.")]
+    [MinLength(6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres.")]
+    public string NuevaContrasena { get; set; } = string.Empty;
+}
+
+public class ReenviarConfirmacionDto
+{
+    [Required(ErrorMessage = "El correo es obligatorio.")]
+    [EmailAddress(ErrorMessage = "El formato de correo es inválido.")]
+    public string Correo { get; set; } = string.Empty;
+}
+
+
