@@ -27,6 +27,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<EstadoUsuario> EstadosUsuario => Set<EstadoUsuario>();         // Catálogo: Activo, Inactivo, Bloqueado
     public DbSet<Usuario> Usuarios => Set<Usuario>();                           // Cuidadores registrados
     public DbSet<TokenUsuario> TokensUsuario => Set<TokenUsuario>();             // Tokens FCM para notificaciones push
+    public DbSet<TokenFcmPaciente> TokensFcmPaciente => Set<TokenFcmPaciente>(); // Tokens FCM de dispositivos de pacientes
+    public DbSet<AlertaTomaOmitida> AlertasTomaOmitida => Set<AlertaTomaOmitida>(); // Control de avisos de tomas omitidas
     public DbSet<TipoPaciente> TiposPaciente => Set<TipoPaciente>();             // Catálogo: Adulto Mayor, Discapacidad, etc.
     public DbSet<Paciente> Pacientes => Set<Paciente>();                         // Pacientes a cargo del cuidador
     public DbSet<TokenPaciente> TokensPaciente => Set<TokenPaciente>();         // Códigos alfanuméricos de vinculación (QR)

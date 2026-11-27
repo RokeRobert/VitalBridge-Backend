@@ -129,4 +129,122 @@ public class FirebaseNotificationService
             return 0;
         }
     }
+
+    /// <summary>
+    /// Envía un mensaje silencioso (Data-Only de alta prioridad) al dispositivo del paciente
+    /// para que sincronice sus tratamientos y reprograme sus alarmas en segundo plano.
+    /// </summary>
+    public async Task<int> EnviarSyncTratamientosPacienteAsync(List<string> tokens, Guid idPaciente)
+    {
+        if (!_inicializado || tokens == null || tokens.Count == 0)
+        {
+            return 0;
+        }
+
+        var tokensUnicos = tokens.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
+        if (tokensUnicos.Count == 0) return 0;
+
+        try
+        {
+            var dataPayload = new Dictionary<string, string>
+            {
+                { "tipo", "SYNC_TRATAMIENTOS" },
+                { "idPaciente", idPaciente.ToString() },
+                { "fechaHora", DateTime.UtcNow.ToString("o") }
+            };
+
+            var message = new MulticastMessage
+            {
+                Tokens = tokensUnicos,
+                Data = dataPayload,
+                Android = new AndroidConfig
+                {
+                    Priority = Priority.High
+                }
+            };
+
+            var response = await FirebaseMessaging.DefaultInstance.SendEachForMulticastAsync(message);
+            _logger.LogInformation(
+                "Sync tratamientos enviado vía FCM a paciente {IdPaciente}. Éxitos: {Exitos}, Fallos: {Fallos}",
+                idPaciente, response.SuccessCount, response.FailureCount);
+            return response.SuccessCount;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error enviando notificación silenciosa SYNC_TRATAMIENTOS al paciente {IdPaciente}", idPaciente);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Envía una notificación informativa al cuidador cuando el paciente supera los 15 minutos
+    /// de retraso sin confirmar la toma de un medicamento.
+    /// </summary>
+    public async Task<int> EnviarNotificacionTomaOmitidaAsync(
+        List<string> tokens,
+        string nombrePaciente,
+        string medicamento,
+        string dosis,
+        string horaProgramada,
+        int idHorario,
+        Guid idPaciente)
+    {
+        if (!_inicializado || tokens == null || tokens.Count == 0)
+        {
+            return 0;
+        }
+
+        var tokensUnicos = tokens.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
+        if (tokensUnicos.Count == 0) return 0;
+
+        try
+        {
+            var titulo = "Toma pendiente sin confirmar";
+            var cuerpo = $"{nombrePaciente} no ha confirmado su dosis de {medicamento} ({dosis}) programada a las {horaProgramada}.";
+
+            var dataPayload = new Dictionary<string, string>
+            {
+                { "tipo", "TOMA_OMITIDA" },
+                { "titulo", titulo },
+                { "cuerpo", cuerpo },
+                { "idHorario", idHorario.ToString() },
+                { "idPaciente", idPaciente.ToString() },
+                { "nombrePaciente", nombrePaciente },
+                { "medicamento", medicamento },
+                { "horaProgramada", horaProgramada }
+            };
+
+            var message = new MulticastMessage
+            {
+                Tokens = tokensUnicos,
+                Data = dataPayload,
+                Notification = new Notification
+                {
+                    Title = titulo,
+                    Body = cuerpo
+                },
+                Android = new AndroidConfig
+                {
+                    Priority = Priority.High,
+                    Notification = new AndroidNotification
+                    {
+                        ChannelId = "vitalbridge_avisos_tomas_v1",
+                        Title = titulo,
+                        Body = cuerpo
+                    }
+                }
+            };
+
+            var response = await FirebaseMessaging.DefaultInstance.SendEachForMulticastAsync(message);
+            _logger.LogInformation(
+                "Notificación TOMA_OMITIDA enviada al cuidador para horario {IdHorario}. Éxitos: {Exitos}, Fallos: {Fallos}",
+                idHorario, response.SuccessCount, response.FailureCount);
+            return response.SuccessCount;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error enviando notificación TOMA_OMITIDA para horario {IdHorario}", idHorario);
+            return 0;
+        }
+    }
 }

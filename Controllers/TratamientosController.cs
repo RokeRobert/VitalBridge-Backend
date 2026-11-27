@@ -17,6 +17,7 @@ using VitalBridge_Backend.Data;
 using VitalBridge_Backend.DTOs;
 using VitalBridge_Backend.Extensions;
 using VitalBridge_Backend.Models;
+using VitalBridge_Backend.Services;
 
 namespace VitalBridge_Backend.Controllers;
 
@@ -27,11 +28,16 @@ public class TratamientosController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly ILogger<TratamientosController> _logger;
+    private readonly FirebaseNotificationService _firebaseService;
 
-    public TratamientosController(ApplicationDbContext context, ILogger<TratamientosController> logger)
+    public TratamientosController(
+        ApplicationDbContext context,
+        ILogger<TratamientosController> logger,
+        FirebaseNotificationService firebaseService)
     {
         _context = context;
         _logger = logger;
+        _firebaseService = firebaseService;
     }
 
     // ========================================================================
@@ -152,6 +158,8 @@ public class TratamientosController : ControllerBase
         await _context.Entry(tratamiento).Reference(t => t.UnidadMedida).LoadAsync();
         await _context.Entry(tratamiento).Collection(t => t.Horarios).LoadAsync();
 
+        await NotificarSyncPacienteAsync(tratamiento.IdPaciente);
+
         return CreatedAtAction(
             nameof(ObtenerTratamientoPorId),
             new { id = tratamiento.IdTratamiento },
@@ -250,6 +258,9 @@ public class TratamientosController : ControllerBase
 
             await _context.Entry(tratamiento).Reference(t => t.UnidadMedida).LoadAsync();
             await _context.Entry(tratamiento).Collection(t => t.Horarios).LoadAsync();
+
+            await NotificarSyncPacienteAsync(tratamiento.IdPaciente);
+
             return Ok(new
             {
                 exito = true,
@@ -284,6 +295,8 @@ public class TratamientosController : ControllerBase
         tratamiento.IdEstadoTratamiento = 2; // Finalizado
         await _context.SaveChangesAsync();
 
+        await NotificarSyncPacienteAsync(tratamiento.IdPaciente);
+
         return Ok(new
         {
             exito = true,
@@ -294,6 +307,26 @@ public class TratamientosController : ControllerBase
     // ========================================================================
     // MÉTODOS AUXILIARES
     // ========================================================================
+
+    private async Task NotificarSyncPacienteAsync(Guid idPaciente)
+    {
+        try
+        {
+            var tokens = await _context.TokensFcmPaciente
+                .Where(t => t.IdPaciente == idPaciente)
+                .Select(t => t.Token)
+                .ToListAsync();
+
+            if (tokens.Any())
+            {
+                await _firebaseService.EnviarSyncTratamientosPacienteAsync(tokens, idPaciente);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "No se pudo notificar sincronización silenciosa al paciente {IdPaciente}", idPaciente);
+        }
+    }
 
     private async Task<int> ResolverUnidadMedidaAsync(int? idUnidad, string? nombreUnidad, string? presentacion)
     {

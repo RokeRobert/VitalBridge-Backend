@@ -40,6 +40,12 @@ public class RegistrarFcmTokenDto
     public Guid? IdUsuario { get; set; }
 }
 
+public class RegistrarFcmTokenPacienteDto
+{
+    public string Token { get; set; } = string.Empty;
+    public Guid IdPaciente { get; set; }
+}
+
 [Authorize]
 [ApiController]
 [Route("api/[controller]")] // Ruta base: /api/alertas
@@ -301,12 +307,19 @@ public class AlertasController : ControllerBase
             return BadRequest(new { exito = false, mensaje = "El ID del usuario cuidador es requerido." });
         }
 
-        var tokenExistente = await _context.TokensUsuario.FindAsync(dto.Token.Trim());
+        var tokenStr = dto.Token.Trim();
+        var tokenOtroRol = await _context.TokensFcmPaciente.FindAsync(tokenStr);
+        if (tokenOtroRol != null)
+        {
+            _context.TokensFcmPaciente.Remove(tokenOtroRol);
+        }
+
+        var tokenExistente = await _context.TokensUsuario.FindAsync(tokenStr);
         if (tokenExistente == null)
         {
             _context.TokensUsuario.Add(new TokenUsuario
             {
-                Token = dto.Token.Trim(),
+                Token = tokenStr,
                 IdUsuario = usuarioId,
                 FechaCreacion = DateTime.UtcNow
             });
@@ -321,5 +334,55 @@ public class AlertasController : ControllerBase
         _logger.LogInformation("Token FCM registrado exitosamente para el usuario {IdUsuario}", usuarioId);
 
         return Ok(new { exito = true, mensaje = "Token FCM registrado exitosamente." });
+    }
+
+    // ========================================================================
+    // 6. REGISTRAR TOKEN FCM DE DISPOSITIVO PARA PACIENTE
+    // Endpoint: POST /api/alertas/fcm-token-paciente
+    // ========================================================================
+    [AllowAnonymous] // El paciente se vincula por QR/código y puede no portar JWT de cuidador
+    [HttpPost("fcm-token-paciente")]
+    public async Task<IActionResult> RegistrarFcmTokenPaciente([FromBody] RegistrarFcmTokenPacienteDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Token) || dto.IdPaciente == Guid.Empty)
+        {
+            return BadRequest(new { exito = false, mensaje = "El token FCM y el ID del paciente son requeridos." });
+        }
+
+        var existePaciente = await _context.Pacientes.AnyAsync(p => p.IdPaciente == dto.IdPaciente);
+        if (!existePaciente)
+        {
+            return NotFound(new { exito = false, mensaje = "Paciente no encontrado." });
+        }
+
+        var tokenStr = dto.Token.Trim();
+
+        // Si el mismo dispositivo antes tuvo sesión como cuidador, limpiar ese token de usuario
+        var tokenCuidador = await _context.TokensUsuario.FindAsync(tokenStr);
+        if (tokenCuidador != null)
+        {
+            _context.TokensUsuario.Remove(tokenCuidador);
+        }
+
+        var tokenExistente = await _context.TokensFcmPaciente.FindAsync(tokenStr);
+        if (tokenExistente == null)
+        {
+            _context.TokensFcmPaciente.Add(new TokenFcmPaciente
+            {
+                Token = tokenStr,
+                IdPaciente = dto.IdPaciente,
+                FechaCreacion = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            tokenExistente.IdPaciente = dto.IdPaciente;
+            tokenExistente.FechaCreacion = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+        _logger.LogInformation("Token FCM registrado exitosamente para el paciente {IdPaciente}", dto.IdPaciente);
+
+        return Ok(new { exito = true, mensaje = "Token FCM del paciente registrado exitosamente." });
     }
 }

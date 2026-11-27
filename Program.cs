@@ -127,6 +127,9 @@ builder.Services.AddHttpClient();
 // 6.1 Registro de Servicio de Notificaciones Push con Firebase Cloud Messaging
 builder.Services.AddSingleton<VitalBridge_Backend.Services.FirebaseNotificationService>();
 
+// 6.2 Monitor en segundo plano para tomas sin confirmar tras 15 minutos
+builder.Services.AddHostedService<VitalBridge_Backend.Services.MonitorTomasOmitidasService>();
+
 // 7. Configuración de Documentación OpenAPI (Swagger en .NET 9)
 builder.Services.AddOpenApi();
 
@@ -155,6 +158,17 @@ app.MapControllers();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    await context.Database.ExecuteSqlRawAsync(@"
+        CREATE TABLE IF NOT EXISTS token_fcm_paciente (
+            token TEXT PRIMARY KEY,
+            id_paciente UUID NOT NULL REFERENCES paciente(id_paciente) ON DELETE CASCADE,
+            fecha_creacion TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS alerta_toma_omitida (
+            id_horario INTEGER PRIMARY KEY REFERENCES horario(id_horario) ON DELETE CASCADE,
+            fecha_notificacion TIMESTAMPTZ DEFAULT NOW()
+        );
+    ");
     await DbSeeder.SeedAsync(context);
 }
 
